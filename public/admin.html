@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>물류 현황판 — 관리</title>
+<link rel="stylesheet" href="styles.css">
+<style>
+  .admin-root { padding:20px; max-width:800px; margin:0 auto; }
+  .admin-root h1 { font-size:17px; margin:0 0 16px; }
+  .section { background:var(--surface-1); border:1px solid var(--border); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .section h2 { font-size:13px; font-weight:700; margin:0 0 10px; color:var(--text-secondary); }
+  .field { margin-bottom:10px; }
+  .field label { display:block; font-size:11px; color:var(--text-muted); margin-bottom:3px; }
+  .field input, .field textarea, .field select {
+    width:100%; font:inherit; font-size:12px; border:1px solid var(--border);
+    border-radius:6px; padding:7px 10px; background:var(--page-plane); color:var(--text-primary);
+  }
+  .field textarea { min-height:120px; resize:vertical; font-family:monospace; font-size:11px; }
+  .btn { display:inline-block; font:inherit; font-size:12px; font-weight:600; padding:8px 16px; border-radius:8px; cursor:pointer; border:none; }
+  .btn-primary { background:var(--series-blue); color:#fff; }
+  .btn-primary:hover { opacity:.9; }
+  .btn-secondary { background:var(--gridline); color:var(--text-primary); }
+  .result { margin-top:8px; font-size:11px; padding:6px 10px; border-radius:6px; }
+  .result.ok { background:rgba(12,163,12,.1); color:var(--status-good); }
+  .result.err { background:rgba(208,59,59,.1); color:var(--status-critical); }
+  .pin-bar { display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+  .pin-bar input { width:120px; }
+  .pin-bar .status { font-size:11px; }
+  .back-link { font-size:12px; color:var(--series-blue); text-decoration:none; }
+  .back-link:hover { text-decoration:underline; }
+  .tab-bar { display:flex; gap:4px; margin-bottom:16px; }
+  .tab-btn { padding:6px 14px; font:inherit; font-size:12px; font-weight:600; border:1px solid var(--border); background:var(--surface-1); color:var(--text-secondary); border-radius:8px 8px 0 0; cursor:pointer; }
+  .tab-btn.active { background:var(--page-plane); border-bottom-color:var(--page-plane); color:var(--text-primary); }
+  .tab-content { display:none; }
+  .tab-content.active { display:block; }
+</style>
+</head>
+<body>
+<div class="admin-root">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+    <a href="./" class="back-link">← 대시보드</a>
+    <h1>관리자 페이지</h1>
+  </div>
+
+  <div class="pin-bar">
+    <label style="font-size:12px;font-weight:600;">PIN:</label>
+    <input type="password" id="pin-input" placeholder="관리자 PIN" maxlength="10">
+    <button class="btn btn-secondary" id="btn-pin-verify">확인</button>
+    <span class="status" id="pin-status"></span>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" data-tab="plan">생산계획 입력</button>
+    <button class="tab-btn" data-tab="staff">인원현황</button>
+    <button class="tab-btn" data-tab="chat">톡방 요약</button>
+  </div>
+
+  <!-- 생산계획 수동 입력 -->
+  <div class="tab-content active" id="tab-plan">
+    <div class="section">
+      <h2>생산계획 JSON 직접 입력</h2>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
+        아래 JSON 형식에 맞춰 입력하세요. 자동 연동(Phase 3) 이전까지 수동으로 관리합니다.
+      </p>
+      <div class="field">
+        <label>날짜</label>
+        <input type="date" id="plan-date">
+      </div>
+      <div class="field">
+        <label>생산계획 JSON</label>
+        <textarea id="plan-json" placeholder='{
+  "teams": {
+    "권선": {
+      "lines": {"day": 5, "night": 3},
+      "notices": [{"tag": "IMEB2", "text": "설명..."}],
+      "switches": [{"shift": "주간", "line": "13", "from": "A품목", "to": "B품목", "qty": 5000}],
+      "resumes": ["IMEB2-3", "IMEB2-W"],
+      "resinChanges": []
+    },
+    "사출": { ... },
+    "전장": { ... }
+  },
+  "kpi": {"linesDay": 33, "linesNight": 26, "switchCount": 4, "resumeCount": 11}
+}'></textarea>
+      </div>
+      <button class="btn btn-primary" id="btn-plan-save">저장</button>
+      <button class="btn btn-secondary" id="btn-plan-template">템플릿 채우기</button>
+      <div id="plan-result"></div>
+    </div>
+  </div>
+
+  <!-- 인원현황 -->
+  <div class="tab-content" id="tab-staff">
+    <div class="section">
+      <h2>인원현황 JSON 입력</h2>
+      <div class="field">
+        <label>인원현황 JSON</label>
+        <textarea id="staff-json" placeholder='{
+  "teams": {
+    "A조": {"current": 5, "total": 6},
+    "B조": {"current": 4, "total": 6}
+  }
+}'></textarea>
+      </div>
+      <button class="btn btn-primary" id="btn-staff-save">저장</button>
+      <div id="staff-result"></div>
+    </div>
+  </div>
+
+  <!-- 톡방 요약 -->
+  <div class="tab-content" id="tab-chat">
+    <div class="section">
+      <h2>팀 톡방 요약 입력</h2>
+      <div class="field">
+        <label>팀 선택</label>
+        <select id="chat-team">
+          <option value="권선">권선</option>
+          <option value="사출">사출</option>
+          <option value="전장">전장</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>요약 내용</label>
+        <textarea id="chat-text" placeholder="카카오톡 내용 요약을 입력하세요..." style="min-height:80px;font-family:inherit;"></textarea>
+      </div>
+      <button class="btn btn-primary" id="btn-chat-save">저장</button>
+      <div id="chat-result"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let pin = "";
+  const pinInput = document.getElementById("pin-input");
+  const pinStatus = document.getElementById("pin-status");
+
+  // PIN 확인
+  document.getElementById("btn-pin-verify").addEventListener("click", async () => {
+    pin = pinInput.value;
+    try {
+      const res = await fetch("api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = await res.json();
+      pinStatus.textContent = data.ok ? "인증됨" : "PIN 오류";
+      pinStatus.style.color = data.ok ? "var(--status-good)" : "var(--status-critical)";
+    } catch {
+      pinStatus.textContent = "연결 실패";
+      pinStatus.style.color = "var(--status-critical)";
+    }
+  });
+
+  // 탭 전환
+  document.querySelectorAll(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  function showResult(id, ok, msg) {
+    const el = document.getElementById(id);
+    el.className = "result " + (ok ? "ok" : "err");
+    el.textContent = msg;
+    setTimeout(() => { el.textContent = ""; el.className = "result"; }, 5000);
+  }
+
+  // 날짜 기본값
+  const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+  document.getElementById("plan-date").value = today;
+
+  // 생산계획 템플릿
+  document.getElementById("btn-plan-template").addEventListener("click", () => {
+    const template = {
+      teams: {
+        "권선": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
+        "사출": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
+        "전장": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
+      },
+      kpi: { linesDay: 0, linesNight: 0, switchCount: 0, resumeCount: 0 },
+    };
+    document.getElementById("plan-json").value = JSON.stringify(template, null, 2);
+  });
+
+  // 생산계획 저장
+  document.getElementById("btn-plan-save").addEventListener("click", async () => {
+    if (!pin) { showResult("plan-result", false, "PIN을 먼저 확인하세요"); return; }
+    const date = document.getElementById("plan-date").value;
+    let data;
+    try {
+      data = JSON.parse(document.getElementById("plan-json").value);
+    } catch {
+      showResult("plan-result", false, "JSON 형식 오류"); return;
+    }
+    data.date = date;
+    data.pushedAt = new Date().toISOString();
+    try {
+      const res = await fetch("api/plan/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, date, data }),
+      });
+      const result = await res.json();
+      showResult("plan-result", res.ok, res.ok ? "저장 완료" : (result.message || "실패"));
+    } catch {
+      showResult("plan-result", false, "네트워크 오류");
+    }
+  });
+
+  // 인원현황 저장
+  document.getElementById("btn-staff-save").addEventListener("click", async () => {
+    if (!pin) { showResult("staff-result", false, "PIN을 먼저 확인하세요"); return; }
+    let data;
+    try {
+      data = JSON.parse(document.getElementById("staff-json").value);
+    } catch {
+      showResult("staff-result", false, "JSON 형식 오류"); return;
+    }
+    try {
+      const res = await fetch("api/upload/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, data }),
+      });
+      showResult("staff-result", res.ok, res.ok ? "저장 완료" : "실패");
+    } catch {
+      showResult("staff-result", false, "네트워크 오류");
+    }
+  });
+
+  // 톡방 요약 저장
+  document.getElementById("btn-chat-save").addEventListener("click", async () => {
+    if (!pin) { showResult("chat-result", false, "PIN을 먼저 확인하세요"); return; }
+    const team = document.getElementById("chat-team").value;
+    const text = document.getElementById("chat-text").value.trim();
+    if (!text) { showResult("chat-result", false, "내용을 입력하세요"); return; }
+    try {
+      const res = await fetch("api/chat/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, team, summary: text }),
+      });
+      showResult("chat-result", res.ok, res.ok ? "저장 완료" : "실패");
+    } catch {
+      showResult("chat-result", false, "네트워크 오류");
+    }
+  });
+</script>
+</body>
+</html>

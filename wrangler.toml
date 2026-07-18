@@ -1,0 +1,16 @@
+name = "logistics-dashboard"
+main = "src/worker.js"
+compatibility_date = "2024-09-25"
+
+[site]
+bucket = "./public"
+
+[vars]
+MANAGER_PIN = "1234"
+API_KEY = "logistics-api-key-2026"
+
+# KV 네임스페이스 — 배포 전 아래 명령으로 생성 후 id를 채워주세요:
+#   npx wrangler kv namespace create LOGISTICS_KV
+[[kv_namespaces]]
+binding = "LOGISTICS_KV"
+id = "PLACEHOLDER"

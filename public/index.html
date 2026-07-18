@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>물류 파트 현황판</title>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="icons/icon.svg">
+</head>
+<body>
+<div class="viz-root">
+
+  <div class="top-bar">
+    <h1>물류 파트 현황판</h1>
+    <div class="meta" id="meta-info">로딩 중...</div>
+  </div>
+
+  <div class="status-strip" id="status-strip">
+    <span><span class="pending">○</span> 데이터 로딩 중</span>
+  </div>
+
+  <div class="kpi-strip" id="kpi-strip">
+    <div class="kpi-tile"><span class="label">가동라인 주간</span><span class="value" id="kpi-day">-</span></div>
+    <div class="kpi-tile"><span class="label">가동라인 야간</span><span class="value" id="kpi-night">-</span></div>
+    <div class="kpi-tile switch-kpi"><span class="label">품목전환(오늘)</span><span class="value" id="kpi-switch">-</span></div>
+    <div class="kpi-tile"><span class="label">재가동(오늘)</span><span class="value" id="kpi-resume">-</span></div>
+  </div>
+
+  <div class="staff-strip" id="staff-strip">
+    <div class="staff-label">인원현황</div>
+    <div class="staff-team"><span class="staff-team-name">데이터 없음</span></div>
+  </div>
+
+  <div class="note-toolbar-row">
+    <span class="today-label">오늘 <span class="tab-date" id="tab-date">-</span> 기준</span>
+    <div class="note-toolbar">
+      <div class="date-nav">
+        <input type="date" id="date-picker">
+        <button type="button" id="btn-today">오늘</button>
+      </div>
+      <span id="note-status" class="note-status"></span>
+      <a href="admin.html" class="toolbar-btn">관리</a>
+    </div>
+  </div>
+
+  <div id="board-container">
+    <div class="loading-overlay">대시보드 데이터를 불러오는 중...</div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
