@@ -7,6 +7,8 @@ const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 let currentDate = todayKST();
 let dashData = null;
 let refreshTimer = null;
+let prevAlertCount = 0;
+let alertSoundPlayed = false;
 
 /* ── 유틸 ── */
 function todayKST() {
@@ -32,6 +34,43 @@ function flashStatus(msg) {
   setTimeout(() => { el.textContent = ""; }, 3000);
 }
 
+/* ── 경고 알림음 (Web Audio API) ── */
+function playAlertSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // 3회 비프음
+    [0, 0.3, 0.6].forEach(delay => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "square";
+      osc.frequency.value = 880;
+      gain.gain.value = 0.3;
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.15);
+    });
+  } catch {}
+}
+
+function checkAlertNotification() {
+  const alerts = dashData?.alerts || [];
+  const criticalCount = alerts.filter(a => a.priority === "critical").length;
+  if (criticalCount > 0 && alerts.length > prevAlertCount && !alertSoundPlayed) {
+    playAlertSound();
+    alertSoundPlayed = true;
+    // 화면 타이틀 깜빡임
+    let blink = 0;
+    const orig = document.title;
+    const blinkInterval = setInterval(() => {
+      document.title = blink % 2 === 0 ? "⚠ 긴급 경고 발생!" : orig;
+      blink++;
+      if (blink > 10) { clearInterval(blinkInterval); document.title = orig; }
+    }, 500);
+  }
+  prevAlertCount = alerts.length;
+}
+
 /* ── 데이터 로드 ── */
 async function loadDashboard(date) {
   try {
@@ -55,6 +94,7 @@ function render() {
   renderStaff();
   renderSidebar();
   renderBoard();
+  checkAlertNotification();
 }
 
 /* ── 상단 메타 ── */
@@ -344,8 +384,10 @@ function renderBoard() {
   // 이벤트 바인딩
   bindNoteInputs();
   bindNoteDeletes();
+  bindNoteChecks();
   bindHandoverInputs();
   bindHandoverDeletes();
+  bindHandoverAcks();
 }
 
 function renderTeamHeader(team, idx, teamPlan) {
@@ -427,8 +469,12 @@ function renderHandoverNotes(team, handoverList) {
     handoverList.forEach((entry, idx) => {
       const authorTag = entry.author ? `<span class="ho-author">${escHtml(entry.author)}</span>` : "";
       const shiftTag = entry.shift ? `<span class="ho-shift">${escHtml(entry.shift)}</span>` : "";
-      html += `<div class="handover-log-item">
-        <div class="ho-meta">${authorTag}${shiftTag}<span class="ho-time">${escHtml(entry.time || "")}</span></div>
+      const ackedClass = entry.acked ? " acked" : "";
+      const ackInfo = entry.acked
+        ? `<span class="ho-ack-done">✓ ${escHtml(entry.ackedBy || "")} ${escHtml(entry.ackedAt || "")}</span>`
+        : `<button class="ho-ack-btn" data-team="${team}" data-idx="${idx}">확인</button>`;
+      html += `<div class="handover-log-item${ackedClass}">
+        <div class="ho-meta">${authorTag}${shiftTag}<span class="ho-time">${escHtml(entry.time || "")}</span>${ackInfo}</div>
         <div class="ho-text">${escHtml(entry.text || "")}</div>
         <span class="hlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
       </div>`;
@@ -454,7 +500,9 @@ function renderManualNotes(team, notesList) {
     <div class="manual-log" id="log-${team}">`;
   if (notesList.length > 0) {
     notesList.forEach((entry, idx) => {
-      html += `<div class="manual-log-item">
+      const doneClass = entry.done ? " done" : "";
+      html += `<div class="manual-log-item${doneClass}">
+        <input type="checkbox" class="mlog-check" data-team="${team}" data-idx="${idx}" ${entry.done ? "checked" : ""}>
         <span class="mlog-time">${escHtml(entry.time || "")}</span>
         <span class="mlog-text">${escHtml(entry.text || "")}</span>
         <span class="mlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
@@ -516,6 +564,42 @@ function bindNoteDeletes() {
       } catch {
         flashStatus("삭제 실패");
       }
+    });
+  });
+}
+
+function bindNoteChecks() {
+  document.querySelectorAll(".mlog-check").forEach(chk => {
+    chk.addEventListener("change", async () => {
+      const team = chk.dataset.team;
+      const idx = chk.dataset.idx;
+      try {
+        const res = await fetch(`api/notes/persistent/${encodeURIComponent(team)}/${idx}/done`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (res.ok) { flashStatus("처리됨"); await loadDashboard(currentDate); }
+      } catch { flashStatus("처리 실패"); }
+    });
+  });
+}
+
+function bindHandoverAcks() {
+  document.querySelectorAll(".ho-ack-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const team = btn.dataset.team;
+      const idx = btn.dataset.idx;
+      const name = prompt("확인자 이름:");
+      if (!name) return;
+      try {
+        const res = await fetch(`api/handover/${currentDate}/${encodeURIComponent(team)}/${idx}/ack`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ackedBy: name }),
+        });
+        if (res.ok) { flashStatus("확인 완료"); await loadDashboard(currentDate); }
+      } catch { flashStatus("처리 실패"); }
     });
   });
 }
@@ -593,9 +677,94 @@ function setupDateNav() {
   });
 }
 
+/* ── 검색 기능 ── */
+function setupSearch() {
+  const panel = document.getElementById("search-panel");
+  const btnSearch = document.getElementById("btn-search");
+  const btnClose = document.getElementById("search-close");
+  const input = document.getElementById("search-input");
+  const btnGo = document.getElementById("search-go");
+  const results = document.getElementById("search-results");
+
+  btnSearch.addEventListener("click", () => {
+    panel.style.display = "flex";
+    input.focus();
+  });
+  btnClose.addEventListener("click", () => { panel.style.display = "none"; });
+  panel.addEventListener("click", (e) => {
+    if (e.target === panel) panel.style.display = "none";
+  });
+
+  async function doSearch() {
+    const keyword = input.value.trim();
+    if (!keyword) return;
+    results.innerHTML = '<div class="search-loading">검색 중...</div>';
+
+    // 최근 14일간 데이터 검색
+    const found = [];
+    const today = todayKST();
+    let d = today;
+    for (let i = 0; i < 14; i++) {
+      try {
+        const res = await fetch(`api/dashboard/${d}`);
+        if (res.ok) {
+          const data = await res.json();
+          // 전달사항 검색
+          const notes = data.notes || {};
+          for (const team of Object.keys(notes)) {
+            (notes[team] || []).forEach(n => {
+              if (n.text && n.text.includes(keyword)) {
+                found.push({ date: d, type: "전달사항", team, text: n.text, time: n.time });
+              }
+            });
+          }
+          // 인수인계 검색
+          const ho = data.handover || {};
+          for (const team of Object.keys(ho)) {
+            (ho[team] || []).forEach(h => {
+              if (h.text && h.text.includes(keyword)) {
+                found.push({ date: d, type: "인수인계", team, text: h.text, author: h.author, time: h.time });
+              }
+            });
+          }
+          // 공통공지 검색
+          (data.commonNotices || []).forEach(cn => {
+            if (cn.text && cn.text.includes(keyword)) {
+              found.push({ date: d, type: "공통공지", text: cn.text });
+            }
+          });
+        }
+      } catch {}
+      // 이전 날짜로 이동
+      const prev = new Date(d + "T12:00:00Z");
+      prev.setUTCDate(prev.getUTCDate() - 1);
+      d = prev.toISOString().slice(0, 10);
+    }
+
+    if (found.length === 0) {
+      results.innerHTML = '<div class="search-empty">검색 결과 없음</div>';
+      return;
+    }
+    let html = `<div class="search-count">${found.length}건 발견</div>`;
+    found.forEach(item => {
+      html += `<div class="search-result-item">
+        <span class="sr-date">${item.date}</span>
+        <span class="sr-type">${escHtml(item.type)}</span>
+        ${item.team ? `<span class="sr-team">${escHtml(item.team)}</span>` : ""}
+        <span class="sr-text">${escHtml(item.text)}</span>
+      </div>`;
+    });
+    results.innerHTML = html;
+  }
+
+  btnGo.addEventListener("click", doSearch);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+}
+
 /* ── 초기화 ── */
 function init() {
   setupDateNav();
+  setupSearch();
   loadDashboard(currentDate);
   // 30초마다 자동 새로고침 (오늘 날짜일 때만)
   refreshTimer = setInterval(() => {

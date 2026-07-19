@@ -18,6 +18,7 @@
         <button type="button" id="btn-today">오늘</button>
       </div>
       <span id="note-status" class="note-status"></span>
+      <button type="button" class="toolbar-btn" id="btn-search">검색</button>
       <a href="admin.html" class="toolbar-btn">관리</a>
     </div>
   </div>
@@ -72,6 +73,21 @@
     </div>
   </div>
 
+</div>
+
+<!-- 검색 패널 -->
+<div id="search-panel" class="search-panel" style="display:none;">
+  <div class="search-panel-inner">
+    <div class="search-header">
+      <span class="search-title">기록 검색</span>
+      <button type="button" class="search-close" id="search-close">×</button>
+    </div>
+    <div class="search-input-row">
+      <input type="text" id="search-input" class="search-input" placeholder="키워드 입력 (전달사항, 인수인계, 공지 등)">
+      <button type="button" id="search-go" class="search-go-btn">검색</button>
+    </div>
+    <div id="search-results" class="search-results"></div>
+  </div>
 </div>
 
 <script src="app.js"></script>

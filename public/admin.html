@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>물류 현황판 — 관리</title>
 <link rel="stylesheet" href="styles.css">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <style>
   .admin-root { padding:20px; max-width:800px; margin:0 auto; }
   .admin-root h1 { font-size:17px; margin:0 0 16px; }
@@ -29,11 +30,60 @@
   .pin-bar .status { font-size:11px; }
   .back-link { font-size:12px; color:var(--series-blue); text-decoration:none; }
   .back-link:hover { text-decoration:underline; }
-  .tab-bar { display:flex; gap:4px; margin-bottom:16px; }
+  .tab-bar { display:flex; gap:4px; margin-bottom:16px; flex-wrap:wrap; }
   .tab-btn { padding:6px 14px; font:inherit; font-size:12px; font-weight:600; border:1px solid var(--border); background:var(--surface-1); color:var(--text-secondary); border-radius:8px 8px 0 0; cursor:pointer; }
   .tab-btn.active { background:var(--page-plane); border-bottom-color:var(--page-plane); color:var(--text-primary); }
   .tab-content { display:none; }
   .tab-content.active { display:block; }
+
+  .drop-zone {
+    border:2px dashed var(--border); border-radius:10px; padding:32px 16px;
+    text-align:center; cursor:pointer; transition:border-color .2s, background .2s;
+    margin-bottom:12px;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color:var(--series-blue); background:rgba(59,130,246,.05);
+  }
+  .drop-zone .icon { font-size:28px; margin-bottom:6px; }
+  .drop-zone .main-text { font-size:13px; font-weight:600; color:var(--text-primary); }
+  .drop-zone .sub-text { font-size:11px; color:var(--text-muted); margin-top:4px; }
+  .drop-zone input[type="file"] { display:none; }
+
+  .file-info {
+    font-size:11px; color:var(--text-secondary); padding:8px 10px;
+    background:var(--surface-1); border:1px solid var(--border); border-radius:6px;
+    margin-bottom:10px; display:none;
+  }
+  .file-info.show { display:flex; align-items:center; gap:8px; }
+  .file-info .fname { font-weight:600; }
+  .file-info .fdetail { color:var(--text-muted); }
+  .file-info .clear-btn {
+    margin-left:auto; cursor:pointer; color:var(--status-critical);
+    font-weight:700; font-size:14px; line-height:1;
+  }
+
+  .preview-table {
+    width:100%; font-size:11px; border-collapse:collapse;
+  }
+  .preview-table th, .preview-table td {
+    border:1px solid var(--border); padding:4px 6px; text-align:left; white-space:nowrap;
+  }
+  .preview-table th { background:var(--gridline); font-weight:600; position:sticky; top:0; }
+  .preview-wrap { max-height:300px; overflow:auto; border:1px solid var(--border); border-radius:6px; margin-bottom:10px; display:none; }
+  .preview-wrap.show { display:block; }
+
+  .mode-toggle { display:flex; gap:4px; margin-bottom:10px; }
+  .mode-btn { padding:4px 10px; font:inherit; font-size:11px; border:1px solid var(--border); background:var(--surface-1); color:var(--text-muted); border-radius:4px; cursor:pointer; }
+  .mode-btn.active { background:var(--series-blue); color:#fff; border-color:var(--series-blue); }
+
+  .parsed-summary {
+    font-size:12px; padding:10px; background:rgba(59,130,246,.06);
+    border:1px solid var(--series-blue); border-radius:6px; margin-bottom:10px; display:none;
+  }
+  .parsed-summary.show { display:block; }
+  .parsed-summary .team-row { display:flex; gap:12px; align-items:center; margin:3px 0; }
+  .parsed-summary .team-name { font-weight:600; min-width:80px; }
+  .parsed-summary .vacancy { color:var(--status-critical); font-size:11px; }
 </style>
 </head>
 <body>
@@ -51,64 +101,127 @@
   </div>
 
   <div class="tab-bar">
-    <button class="tab-btn active" data-tab="plan">생산계획 입력</button>
+    <button class="tab-btn active" data-tab="plan">생산계획</button>
     <button class="tab-btn" data-tab="staff">인원현황</button>
+    <button class="tab-btn" data-tab="bom">BOM</button>
     <button class="tab-btn" data-tab="chat">톡방 요약</button>
   </div>
 
-  <!-- 생산계획 수동 입력 -->
+  <!-- ── 생산계획 ── -->
   <div class="tab-content active" id="tab-plan">
     <div class="section">
-      <h2>생산계획 JSON 직접 입력</h2>
-      <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
-        아래 JSON 형식에 맞춰 입력하세요. 자동 연동(Phase 3) 이전까지 수동으로 관리합니다.
-      </p>
-      <div class="field">
-        <label>날짜</label>
-        <input type="date" id="plan-date">
+      <h2>생산계획 업로드</h2>
+      <div class="mode-toggle">
+        <button class="mode-btn active" data-mode="file" data-target="plan">파일 업로드</button>
+        <button class="mode-btn" data-mode="json" data-target="plan">JSON 직접입력</button>
       </div>
-      <div class="field">
-        <label>생산계획 JSON</label>
-        <textarea id="plan-json" placeholder='{
-  "teams": {
-    "권선": {
-      "lines": {"day": 5, "night": 3},
-      "notices": [{"tag": "IMEB2", "text": "설명..."}],
-      "switches": [{"shift": "주간", "line": "13", "from": "A품목", "to": "B품목", "qty": 5000}],
-      "resumes": ["IMEB2-3", "IMEB2-W"],
-      "resinChanges": []
-    },
-    "사출": { ... },
-    "전장": { ... }
-  },
-  "kpi": {"linesDay": 33, "linesNight": 26, "switchCount": 4, "resumeCount": 11}
-}'></textarea>
+      <div id="plan-file-mode">
+        <div class="field">
+          <label>날짜</label>
+          <input type="date" id="plan-date">
+        </div>
+        <div class="drop-zone" id="plan-drop">
+          <input type="file" id="plan-file" accept=".xlsx,.xls,.csv">
+          <div class="icon">📄</div>
+          <div class="main-text">엑셀 파일을 여기에 드래그하거나 클릭</div>
+          <div class="sub-text">.xlsx, .xls, .csv 지원</div>
+        </div>
+        <div class="file-info" id="plan-file-info">
+          <span class="fname" id="plan-fname"></span>
+          <span class="fdetail" id="plan-fdetail"></span>
+          <span class="clear-btn" id="plan-clear">×</span>
+        </div>
+        <div class="preview-wrap" id="plan-preview-wrap">
+          <table class="preview-table" id="plan-preview"></table>
+        </div>
+        <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px;">
+          그룹웨어에서 다운받은 생산계획 엑셀 파일을 업로드하세요.
+        </p>
+        <button class="btn btn-primary" id="btn-plan-file-save">업로드 및 저장</button>
       </div>
-      <button class="btn btn-primary" id="btn-plan-save">저장</button>
-      <button class="btn btn-secondary" id="btn-plan-template">템플릿 채우기</button>
+      <div id="plan-json-mode" style="display:none;">
+        <div class="field">
+          <label>날짜</label>
+          <input type="date" id="plan-date-json">
+        </div>
+        <div class="field">
+          <label>생산계획 JSON</label>
+          <textarea id="plan-json" placeholder='{ "teams": { "권선": { ... }, "사출": { ... }, "전장": { ... } }, "kpi": { ... } }'></textarea>
+        </div>
+        <button class="btn btn-primary" id="btn-plan-save">저장</button>
+        <button class="btn btn-secondary" id="btn-plan-template">템플릿 채우기</button>
+      </div>
       <div id="plan-result"></div>
     </div>
   </div>
 
-  <!-- 인원현황 -->
+  <!-- ── 인원현황 ── -->
   <div class="tab-content" id="tab-staff">
     <div class="section">
-      <h2>인원현황 JSON 입력</h2>
-      <div class="field">
-        <label>인원현황 JSON</label>
-        <textarea id="staff-json" placeholder='{
-  "teams": {
-    "A조": {"current": 5, "total": 6},
-    "B조": {"current": 4, "total": 6}
-  }
-}'></textarea>
+      <h2>인원현황 업로드</h2>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        한번 등록하면 다시 업로드할 때까지 유지됩니다.
+      </p>
+      <div class="mode-toggle">
+        <button class="mode-btn active" data-mode="file" data-target="staff">파일 업로드</button>
+        <button class="mode-btn" data-mode="json" data-target="staff">JSON 직접입력</button>
       </div>
-      <button class="btn btn-primary" id="btn-staff-save">저장</button>
+      <div id="staff-file-mode">
+        <div class="drop-zone" id="staff-drop">
+          <input type="file" id="staff-file" accept=".xlsx,.xls,.csv">
+          <div class="icon">📄</div>
+          <div class="main-text">인원현황 엑셀 파일을 여기에 드래그하거나 클릭</div>
+          <div class="sub-text">.xlsx, .xls, .csv 지원 · 조편성표 형식 자동 인식</div>
+        </div>
+        <div class="file-info" id="staff-file-info">
+          <span class="fname" id="staff-fname"></span>
+          <span class="fdetail" id="staff-fdetail"></span>
+          <span class="clear-btn" id="staff-clear">×</span>
+        </div>
+        <div class="parsed-summary" id="staff-parsed">
+          <div style="font-weight:700;margin-bottom:6px;">파싱 결과 미리보기</div>
+          <div id="staff-parsed-body"></div>
+        </div>
+        <button class="btn btn-primary" id="btn-staff-file-save">업로드 및 저장</button>
+      </div>
+      <div id="staff-json-mode" style="display:none;">
+        <div class="field">
+          <label>인원현황 JSON</label>
+          <textarea id="staff-json" placeholder='{ "teams": { "사출": {"current":7,"total":8}, "전장+권선": {"current":2,"total":4} } }'></textarea>
+        </div>
+        <button class="btn btn-primary" id="btn-staff-save">저장</button>
+      </div>
       <div id="staff-result"></div>
     </div>
   </div>
 
-  <!-- 톡방 요약 -->
+  <!-- ── BOM ── -->
+  <div class="tab-content" id="tab-bom">
+    <div class="section">
+      <h2>BOM 마스터 업로드</h2>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+        품목전환 시 수지 변경 자동 감지에 사용됩니다. 한번 등록하면 다시 업로드할 때까지 유지됩니다.
+      </p>
+      <div class="drop-zone" id="bom-drop">
+        <input type="file" id="bom-file" accept=".xlsx,.xls,.csv">
+        <div class="icon">📄</div>
+        <div class="main-text">BOM 엑셀 파일을 여기에 드래그하거나 클릭</div>
+        <div class="sub-text">.xlsx, .xls, .csv 지원</div>
+      </div>
+      <div class="file-info" id="bom-file-info">
+        <span class="fname" id="bom-fname"></span>
+        <span class="fdetail" id="bom-fdetail"></span>
+        <span class="clear-btn" id="bom-clear">×</span>
+      </div>
+      <div class="preview-wrap" id="bom-preview-wrap">
+        <table class="preview-table" id="bom-preview"></table>
+      </div>
+      <button class="btn btn-primary" id="btn-bom-save">업로드 및 저장</button>
+      <div id="bom-result"></div>
+    </div>
+  </div>
+
+  <!-- ── 톡방 요약 ── -->
   <div class="tab-content" id="tab-chat">
     <div class="section">
       <h2>팀 톡방 요약 입력</h2>
@@ -133,10 +246,14 @@
 
 <script>
   let pin = "";
+  let planFileData = null;
+  let staffParsedData = null;  // excelToStaff 결과
+  let bomFileData = null;
+
   const pinInput = document.getElementById("pin-input");
   const pinStatus = document.getElementById("pin-status");
 
-  // PIN 확인
+  /* ── PIN 확인 ── */
   document.getElementById("btn-pin-verify").addEventListener("click", async () => {
     pin = pinInput.value;
     try {
@@ -154,13 +271,25 @@
     }
   });
 
-  // 탭 전환
+  /* ── 탭 전환 ── */
   document.querySelectorAll(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
       document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+    });
+  });
+
+  /* ── 모드 전환 (파일 ↔ JSON) ── */
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const target = btn.dataset.target;
+      const mode = btn.dataset.mode;
+      btn.parentElement.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      document.getElementById(`${target}-file-mode`).style.display = mode === "file" ? "" : "none";
+      document.getElementById(`${target}-json-mode`).style.display = mode === "json" ? "" : "none";
     });
   });
 
@@ -171,49 +300,205 @@
     setTimeout(() => { el.textContent = ""; el.className = "result"; }, 5000);
   }
 
-  // 날짜 기본값
+  function esc(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
   const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
   document.getElementById("plan-date").value = today;
+  document.getElementById("plan-date-json").value = today;
 
-  // 생산계획 템플릿
-  document.getElementById("btn-plan-template").addEventListener("click", () => {
-    const template = {
-      teams: {
-        "권선": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
-        "사출": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
-        "전장": { lines: { day: 0, night: 0 }, notices: [], switches: [], resumes: [], resinChanges: [] },
-      },
-      kpi: { linesDay: 0, linesNight: 0, switchCount: 0, resumeCount: 0 },
-    };
-    document.getElementById("plan-json").value = JSON.stringify(template, null, 2);
+  /* ── 드래그 앤 드롭 유틸 ── */
+  function setupDropZone(dropId, fileInputId, onFile) {
+    const zone = document.getElementById(dropId);
+    const input = document.getElementById(fileInputId);
+    zone.addEventListener("click", () => input.click());
+    zone.addEventListener("dragover", (e) => { e.preventDefault(); zone.classList.add("drag-over"); });
+    zone.addEventListener("dragleave", () => zone.classList.remove("drag-over"));
+    zone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      zone.classList.remove("drag-over");
+      if (e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
+    });
+    input.addEventListener("change", () => {
+      if (input.files.length) onFile(input.files[0]);
+    });
+  }
+
+  function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  function renderPreviewTable(tableId, rows, maxRows) {
+    if (!rows || rows.length === 0) return;
+    const headers = Object.keys(rows[0]);
+    const display = rows.slice(0, maxRows || 20);
+    let html = "<thead><tr>" + headers.map(h => `<th>${esc(h)}</th>`).join("") + "</tr></thead><tbody>";
+    display.forEach(row => {
+      html += "<tr>" + headers.map(h => `<td>${esc(String(row[h] ?? ""))}</td>`).join("") + "</tr>";
+    });
+    if (rows.length > (maxRows || 20)) {
+      html += `<tr><td colspan="${headers.length}" style="text-align:center;color:var(--text-muted);">... 외 ${rows.length - (maxRows||20)}행</td></tr>`;
+    }
+    html += "</tbody>";
+    document.getElementById(tableId).innerHTML = html;
+  }
+
+  /* ════════════════════════════════════════════
+     인원현황 — 조편성표 전용 파서
+     ════════════════════════════════════════════ */
+  function excelToStaff(workbook) {
+    const ws = workbook.Sheets[workbook.SheetNames[0]];
+    const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+    // 1) 헤더 행 찾기 (A조 또는 B조 포함 행)
+    let headerIdx = -1;
+    for (let r = 0; r < Math.min(grid.length, 15); r++) {
+      const row = grid[r].map(c => String(c).trim());
+      if (row.some(c => /^[AB]조$/.test(c))) {
+        headerIdx = r;
+        break;
+      }
+    }
+
+    // 조편성표 형식이 아니면 단순 테이블로 fallback
+    if (headerIdx < 0) {
+      return excelToStaffSimple(workbook);
+    }
+
+    const headerRow = grid[headerIdx].map(c => String(c).trim());
+
+    // 2) 담당(dept) 컬럼과 이름(name) 컬럼 매핑
+    //    헤더에서 "A조" 또는 "B조" 컬럼을 찾고, 바로 앞 컬럼이 "담당"
+    const sections = [];
+    for (let c = 1; c < headerRow.length; c++) {
+      if (/^[AB]조$/.test(headerRow[c])) {
+        sections.push({ deptCol: c - 1, nameCol: c, group: headerRow[c] });
+      }
+    }
+
+    // 3) 데이터 행 스캔: 담당별 인원 집계
+    const deptTracker = {};
+    const result = {};
+
+    for (let r = headerIdx + 1; r < grid.length; r++) {
+      const row = grid[r];
+      for (const sec of sections) {
+        // 담당 라벨 갱신
+        const deptVal = String(row[sec.deptCol] || "").trim();
+        if (deptVal && deptVal !== "담당" && deptVal !== "구역") {
+          deptTracker[sec.nameCol] = deptVal;
+        }
+
+        // 이름 셀 확인
+        const nameVal = String(row[sec.nameCol] || "").trim();
+        if (!nameVal) continue;
+
+        const dept = deptTracker[sec.nameCol] || "기타";
+        // 담당명 정규화: "사출(A)" "사출(B)" → "사출", 공백 정리
+        const normDept = dept.replace(/\([AB]\)/g, "").replace(/\s+/g, "").trim();
+
+        if (!result[normDept]) result[normDept] = { current: 0, total: 0 };
+
+        if (/충원/.test(nameVal)) {
+          // 충원 필요 = 빈 자리 (total만 증가)
+          result[normDept].total++;
+        } else {
+          result[normDept].current++;
+          result[normDept].total++;
+        }
+      }
+    }
+
+    return { teams: result };
+  }
+
+  // 단순 테이블 형식 fallback (팀명/현원/정원 컬럼)
+  function excelToStaffSimple(workbook) {
+    const ws = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const teams = {};
+    if (rows.length === 0) return { teams };
+    const cols = Object.keys(rows[0]);
+    const teamCol = cols.find(c => /팀|team|부서|파트|조/i.test(c)) || cols[0];
+    const currentCol = cols.find(c => /현재|current|현원|출근/i.test(c));
+    const totalCol = cols.find(c => /정원|total|전체|인원/i.test(c));
+    rows.forEach(row => {
+      const name = String(row[teamCol] || "").trim();
+      if (!name) return;
+      teams[name] = {
+        current: currentCol ? (Number(row[currentCol]) || 0) : 0,
+        total: totalCol ? (Number(row[totalCol]) || 0) : 0,
+      };
+    });
+    return { teams };
+  }
+
+  /* ── 인원현황 파일 선택 ── */
+  setupDropZone("staff-drop", "staff-file", async (file) => {
+    try {
+      const buf = await readFileAsArrayBuffer(file);
+      const wb = XLSX.read(buf, { type: "array" });
+      staffParsedData = excelToStaff(wb);
+
+      document.getElementById("staff-fname").textContent = file.name;
+      document.getElementById("staff-fdetail").textContent = `${(file.size/1024).toFixed(1)}KB`;
+      document.getElementById("staff-file-info").classList.add("show");
+
+      // 파싱 결과 미리보기
+      const body = document.getElementById("staff-parsed-body");
+      let html = "";
+      const teams = staffParsedData.teams;
+      for (const [name, s] of Object.entries(teams)) {
+        const vacancy = s.total - s.current;
+        html += `<div class="team-row">
+          <span class="team-name">${esc(name)}</span>
+          <span>${s.current}명 / 정원 ${s.total}명</span>
+          ${vacancy > 0 ? `<span class="vacancy">충원 ${vacancy}명</span>` : ""}
+        </div>`;
+      }
+      if (Object.keys(teams).length === 0) {
+        html = '<div style="color:var(--text-muted)">인식된 팀이 없습니다. JSON 직접입력을 이용하세요.</div>';
+      }
+      body.innerHTML = html;
+      document.getElementById("staff-parsed").classList.add("show");
+    } catch (e) {
+      showResult("staff-result", false, "파일 읽기 실패: " + e.message);
+    }
   });
 
-  // 생산계획 저장
-  document.getElementById("btn-plan-save").addEventListener("click", async () => {
-    if (!pin) { showResult("plan-result", false, "PIN을 먼저 확인하세요"); return; }
-    const date = document.getElementById("plan-date").value;
-    let data;
+  document.getElementById("staff-clear").addEventListener("click", () => {
+    staffParsedData = null;
+    document.getElementById("staff-file").value = "";
+    document.getElementById("staff-file-info").classList.remove("show");
+    document.getElementById("staff-parsed").classList.remove("show");
+  });
+
+  /* ── 인원현황 저장 (파일) ── */
+  document.getElementById("btn-staff-file-save").addEventListener("click", async () => {
+    if (!pin) { showResult("staff-result", false, "PIN을 먼저 확인하세요"); return; }
+    if (!staffParsedData) { showResult("staff-result", false, "파일을 먼저 선택하세요"); return; }
+
     try {
-      data = JSON.parse(document.getElementById("plan-json").value);
-    } catch {
-      showResult("plan-result", false, "JSON 형식 오류"); return;
-    }
-    data.date = date;
-    data.pushedAt = new Date().toISOString();
-    try {
-      const res = await fetch("api/plan/manual", {
+      const res = await fetch("api/upload/staff", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin, date, data }),
+        body: JSON.stringify({ pin, data: staffParsedData }),
       });
-      const result = await res.json();
-      showResult("plan-result", res.ok, res.ok ? "저장 완료" : (result.message || "실패"));
+      showResult("staff-result", res.ok, res.ok ? `저장 완료 (${Object.keys(staffParsedData.teams).length}개 팀)` : "실패");
     } catch {
-      showResult("plan-result", false, "네트워크 오류");
+      showResult("staff-result", false, "네트워크 오류");
     }
   });
 
-  // 인원현황 저장
+  /* ── 인원현황 저장 (JSON) ── */
   document.getElementById("btn-staff-save").addEventListener("click", async () => {
     if (!pin) { showResult("staff-result", false, "PIN을 먼저 확인하세요"); return; }
     let data;
@@ -234,7 +519,169 @@
     }
   });
 
-  // 톡방 요약 저장
+  /* ════════════════════════════════════════════
+     BOM 업로드
+     ════════════════════════════════════════════ */
+  setupDropZone("bom-drop", "bom-file", async (file) => {
+    try {
+      const buf = await readFileAsArrayBuffer(file);
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      bomFileData = rows;
+
+      document.getElementById("bom-fname").textContent = file.name;
+      document.getElementById("bom-fdetail").textContent = `${rows.length}행 · ${(file.size/1024).toFixed(1)}KB`;
+      document.getElementById("bom-file-info").classList.add("show");
+
+      renderPreviewTable("bom-preview", rows, 15);
+      document.getElementById("bom-preview-wrap").classList.add("show");
+    } catch (e) {
+      showResult("bom-result", false, "파일 읽기 실패: " + e.message);
+    }
+  });
+
+  document.getElementById("bom-clear").addEventListener("click", () => {
+    bomFileData = null;
+    document.getElementById("bom-file").value = "";
+    document.getElementById("bom-file-info").classList.remove("show");
+    document.getElementById("bom-preview-wrap").classList.remove("show");
+  });
+
+  document.getElementById("btn-bom-save").addEventListener("click", async () => {
+    if (!pin) { showResult("bom-result", false, "PIN을 먼저 확인하세요"); return; }
+    if (!bomFileData) { showResult("bom-result", false, "파일을 먼저 선택하세요"); return; }
+
+    try {
+      const res = await fetch("api/upload/bom", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, data: bomFileData }),
+      });
+      showResult("bom-result", res.ok, res.ok ? `저장 완료 (${bomFileData.length}행)` : "실패");
+    } catch {
+      showResult("bom-result", false, "네트워크 오류");
+    }
+  });
+
+  /* ════════════════════════════════════════════
+     생산계획
+     ════════════════════════════════════════════ */
+  setupDropZone("plan-drop", "plan-file", async (file) => {
+    try {
+      const buf = await readFileAsArrayBuffer(file);
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      planFileData = rows;
+
+      document.getElementById("plan-fname").textContent = file.name;
+      document.getElementById("plan-fdetail").textContent = `${rows.length}행 · ${(file.size/1024).toFixed(1)}KB`;
+      document.getElementById("plan-file-info").classList.add("show");
+
+      renderPreviewTable("plan-preview", rows, 15);
+      document.getElementById("plan-preview-wrap").classList.add("show");
+    } catch (e) {
+      showResult("plan-result", false, "파일 읽기 실패: " + e.message);
+    }
+  });
+
+  document.getElementById("plan-clear").addEventListener("click", () => {
+    planFileData = null;
+    document.getElementById("plan-file").value = "";
+    document.getElementById("plan-file-info").classList.remove("show");
+    document.getElementById("plan-preview-wrap").classList.remove("show");
+  });
+
+  function excelToPlan(rows) {
+    const teams = { "권선": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] },
+                    "사출": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] },
+                    "전장": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] } };
+    const kpi = { linesDay:0, linesNight:0, switchCount:0, resumeCount:0 };
+    if (rows.length === 0) return { teams, kpi };
+    const cols = Object.keys(rows[0]);
+    rows.forEach(row => {
+      const teamCol = cols.find(c => /팀|team|부서|파트/i.test(c));
+      const team = teamCol ? String(row[teamCol]).trim() : "";
+      const matchedTeam = ["권선","사출","전장"].find(t => team.includes(t));
+      if (!matchedTeam) return;
+      const fromCol = cols.find(c => /현재|from|기존|변경전/i.test(c));
+      const toCol = cols.find(c => /변경|to|신규|변경후/i.test(c));
+      const shiftCol = cols.find(c => /주야|shift|근무/i.test(c));
+      const lineCol = cols.find(c => /호기|line|라인/i.test(c));
+      const qtyCol = cols.find(c => /수량|qty|계획량/i.test(c));
+      if (fromCol && toCol && row[fromCol] && row[toCol]) {
+        teams[matchedTeam].switches.push({
+          shift: shiftCol ? String(row[shiftCol]) : "",
+          line: lineCol ? String(row[lineCol]) : "",
+          from: String(row[fromCol]),
+          to: String(row[toCol]),
+          qty: qtyCol ? Number(row[qtyCol]) || 0 : 0,
+        });
+        kpi.switchCount++;
+      }
+      const noticeCol = cols.find(c => /공지|notice|비고|특이|메모/i.test(c));
+      if (noticeCol && row[noticeCol]) {
+        teams[matchedTeam].notices.push({ tag: matchedTeam, text: String(row[noticeCol]) });
+      }
+    });
+    return { teams, kpi };
+  }
+
+  document.getElementById("btn-plan-file-save").addEventListener("click", async () => {
+    if (!pin) { showResult("plan-result", false, "PIN을 먼저 확인하세요"); return; }
+    if (!planFileData) { showResult("plan-result", false, "파일을 먼저 선택하세요"); return; }
+    const date = document.getElementById("plan-date").value;
+    const planData = excelToPlan(planFileData);
+    planData.date = date;
+    planData.pushedAt = new Date().toISOString();
+    try {
+      const res = await fetch("api/plan/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, date, data: planData }),
+      });
+      const result = await res.json();
+      showResult("plan-result", res.ok, res.ok ? `저장 완료 (${planFileData.length}행 처리)` : (result.message || "실패"));
+    } catch {
+      showResult("plan-result", false, "네트워크 오류");
+    }
+  });
+
+  document.getElementById("btn-plan-template").addEventListener("click", () => {
+    const template = {
+      teams: {
+        "권선": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] },
+        "사출": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] },
+        "전장": { lines:{day:0,night:0}, notices:[], switches:[], resumes:[], resinChanges:[] },
+      },
+      kpi: { linesDay:0, linesNight:0, switchCount:0, resumeCount:0 },
+    };
+    document.getElementById("plan-json").value = JSON.stringify(template, null, 2);
+  });
+
+  document.getElementById("btn-plan-save").addEventListener("click", async () => {
+    if (!pin) { showResult("plan-result", false, "PIN을 먼저 확인하세요"); return; }
+    const date = document.getElementById("plan-date-json").value;
+    let data;
+    try { data = JSON.parse(document.getElementById("plan-json").value); }
+    catch { showResult("plan-result", false, "JSON 형식 오류"); return; }
+    data.date = date;
+    data.pushedAt = new Date().toISOString();
+    try {
+      const res = await fetch("api/plan/manual", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, date, data }),
+      });
+      const result = await res.json();
+      showResult("plan-result", res.ok, res.ok ? "저장 완료" : (result.message || "실패"));
+    } catch {
+      showResult("plan-result", false, "네트워크 오류");
+    }
+  });
+
+  /* ── 톡방 요약 ── */
   document.getElementById("btn-chat-save").addEventListener("click", async () => {
     if (!pin) { showResult("chat-result", false, "PIN을 먼저 확인하세요"); return; }
     const team = document.getElementById("chat-team").value;

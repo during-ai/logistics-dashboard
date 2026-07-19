@@ -118,6 +118,24 @@ async function handleAPI(url, method, request, env) {
     } catch { return json(400, { message: "Invalid request" }); }
   }
 
+  // ── POST /api/notes/:key/:team/:idx/done (전달사항 완료 처리) ──
+  const notesDoneMatch = p.match(/^\/api\/notes\/([^/]+)\/([^/]+)\/(\d+)\/done$/);
+  if (method === "POST" && notesDoneMatch) {
+    const [, dateOrKey, team, idxStr] = notesDoneMatch;
+    const decodedTeam = decodeURIComponent(team);
+    const idx = parseInt(idxStr);
+    const key = dateOrKey === "persistent" ? "notes:persistent" : `notes:${dateOrKey}`;
+    const raw = await env.LOGISTICS_KV.get(key);
+    const notes = raw ? JSON.parse(raw) : {};
+    if (notes[decodedTeam] && idx >= 0 && idx < notes[decodedTeam].length) {
+      const wasDone = notes[decodedTeam][idx].done;
+      notes[decodedTeam][idx].done = !wasDone;
+      notes[decodedTeam][idx].doneAt = !wasDone ? new Date().toISOString() : null;
+    }
+    await env.LOGISTICS_KV.put(key, JSON.stringify(notes));
+    return json(200, { ok: true, notes });
+  }
+
   // ── DELETE /api/notes/:key/:team/:idx ── (persistent 또는 날짜별)
   const notesDelMatch = p.match(/^\/api\/notes\/([^/]+)\/([^/]+)\/(\d+)$/);
   if (method === "DELETE" && notesDelMatch) {
@@ -330,6 +348,27 @@ async function handleAPI(url, method, request, env) {
 
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
       return json(201, { ok: true, handover });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
+  // ── POST /api/handover/:date/:team/:idx/ack (인수인계 확인) ──
+  const handoverAckMatch = p.match(/^\/api\/handover\/([^/]+)\/([^/]+)\/(\d+)\/ack$/);
+  if (method === "POST" && handoverAckMatch) {
+    const [, hDate, team, idxStr] = handoverAckMatch;
+    const decodedTeam = decodeURIComponent(team);
+    const idx = parseInt(idxStr);
+    try {
+      const body = await request.json();
+      const key = `handover:${hDate}`;
+      const raw = await env.LOGISTICS_KV.get(key);
+      const handover = raw ? JSON.parse(raw) : {};
+      if (handover[decodedTeam] && idx >= 0 && idx < handover[decodedTeam].length) {
+        handover[decodedTeam][idx].acked = true;
+        handover[decodedTeam][idx].ackedBy = body.ackedBy || "";
+        handover[decodedTeam][idx].ackedAt = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(11, 16);
+      }
+      await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      return json(200, { ok: true, handover });
     } catch { return json(400, { message: "Invalid request" }); }
   }
 
@@ -557,8 +596,40 @@ async function snapshotHistory(env, date) {
 /* ── 스케줄러: 매일 09시(KST) 인수인계 리셋 ── */
 async function handleScheduled(env) {
   const today = getTodayKST();
-  await env.LOGISTICS_KV.delete(`handover:${today}`);
-  console.log(`[cron] handover:${today} 리셋 완료`);
+  const yesterday = getPrevDateKST(today);
+  // 전일 인수인계 중 미확인 항목은 유지, 전부 확인이면 삭제
+  const raw = await env.LOGISTICS_KV.get(`handover:${yesterday}`);
+  if (raw) {
+    const handover = JSON.parse(raw);
+    let allAcked = true;
+    for (const team of Object.keys(handover)) {
+      if (handover[team].some(item => !item.acked)) {
+        allAcked = false;
+        break;
+      }
+    }
+    if (allAcked) {
+      await env.LOGISTICS_KV.delete(`handover:${yesterday}`);
+      console.log(`[cron] handover:${yesterday} 전체 확인됨 → 삭제`);
+    } else {
+      console.log(`[cron] handover:${yesterday} 미확인 항목 존재 → 유지`);
+    }
+  }
+  // 3일 이상 경과된 전달사항 중 done인 항목 자동 정리
+  const notesRaw = await env.LOGISTICS_KV.get("notes:persistent");
+  if (notesRaw) {
+    const notes = JSON.parse(notesRaw);
+    let changed = false;
+    for (const team of Object.keys(notes)) {
+      const before = notes[team].length;
+      notes[team] = notes[team].filter(n => !n.done || !n.doneAt || (Date.now() - new Date(n.doneAt).getTime()) < 3 * 24 * 60 * 60 * 1000);
+      if (notes[team].length !== before) changed = true;
+    }
+    if (changed) {
+      await env.LOGISTICS_KV.put("notes:persistent", JSON.stringify(notes));
+      console.log(`[cron] 완료된 전달사항 정리됨`);
+    }
+  }
 }
 
 /* ── 메인 핸들러 ── */
