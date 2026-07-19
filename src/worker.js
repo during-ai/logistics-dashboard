@@ -262,6 +262,28 @@ async function handleAPI(url, method, request, env) {
     return json(200, { ok: true });
   }
 
+  // ── POST /api/material/push (API_KEY 인증) ──
+  if (method === "POST" && p === "/api/material/push") {
+    const apiKey = request.headers.get("X-API-Key");
+    if (!apiKey || apiKey !== env.API_KEY) {
+      return json(401, { message: "Invalid API key" });
+    }
+    try {
+      const body = await request.json();
+      const date = body.date || getTodayKST();
+      await env.LOGISTICS_KV.put(`material:${date}`, JSON.stringify(body));
+      return json(200, { ok: true, date, total: (body.items || []).length });
+    } catch { return json(400, { message: "Invalid JSON" }); }
+  }
+
+  // ── GET /api/material/:date ──
+  const materialMatch = p.match(/^\/api\/material\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === "GET" && materialMatch) {
+    const raw = await env.LOGISTICS_KV.get(`material:${materialMatch[1]}`);
+    if (!raw) return json(404, { message: "해당 날짜 자재 데이터 없음" });
+    return json(200, JSON.parse(raw));
+  }
+
   // ── POST /api/alerts/push (API_KEY 인증) ──
   if (method === "POST" && p === "/api/alerts/push") {
     const apiKey = request.headers.get("X-API-Key");
@@ -537,7 +559,7 @@ function getWeekdayDate(dateStr) {
 
 /* ── 대시보드 데이터 통합 조회 ── */
 async function serveDashboard(env, date) {
-  const [planRaw, notesRaw, staffRaw, bomRaw, chatRaw, commRaw, commonRaw, alertsRaw, handoverRaw] = await Promise.all([
+  const [planRaw, notesRaw, staffRaw, bomRaw, chatRaw, commRaw, commonRaw, alertsRaw, handoverRaw, materialRaw] = await Promise.all([
     env.LOGISTICS_KV.get(`plan:${date}`),
     env.LOGISTICS_KV.get("notes:persistent"),
     env.LOGISTICS_KV.get("staff:latest"),
@@ -547,6 +569,7 @@ async function serveDashboard(env, date) {
     env.LOGISTICS_KV.get("notices:common"),
     env.LOGISTICS_KV.get(`alerts:${date}`),
     env.LOGISTICS_KV.get(`handover:${date}`),
+    env.LOGISTICS_KV.get(`material:${date}`),
   ]);
 
   // 당일 plan이 없으면: 주말→금요일, 아니면 최대 7일 전까지 fallback
@@ -636,6 +659,7 @@ async function serveDashboard(env, date) {
     calendarEvents,
     alerts: activeAlerts,
     handover: handoverRaw ? JSON.parse(handoverRaw) : { "권선": [], "사출": [], "전장": [] },
+    material: materialRaw ? JSON.parse(materialRaw) : null,
   });
 }
 

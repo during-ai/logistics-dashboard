@@ -126,6 +126,11 @@ function renderStatusStrip() {
   html += alerts.length > 0
     ? `<span><span class="warn-dot">●</span> 시스템 경고 ${alerts.length}건</span>`
     : '<span><span class="ok">●</span> 시스템 정상</span>';
+  const material = dashData.material;
+  const matCount = material && material.items ? material.items.length : 0;
+  html += matCount > 0
+    ? `<span><span class="warn-dot">●</span> 자재 부족 ${matCount}건</span>`
+    : (material ? '<span><span class="ok">●</span> 자재 정상</span>' : '');
   document.getElementById("status-strip").innerHTML = html;
 }
 
@@ -168,6 +173,7 @@ function renderStaff() {
 /* ── 사이드바: 경고 + 공통 공지 + 주간 캘린더 ── */
 function renderSidebar() {
   renderAlerts();
+  renderMaterial();
   renderCommonNotices();
   renderWeekCalendar();
   bindCommonNoteInput();
@@ -212,6 +218,60 @@ function renderAlerts() {
       } catch { flashStatus("처리 실패"); }
     });
   });
+}
+
+function renderMaterial() {
+  const section = document.getElementById("material-section");
+  const listEl = document.getElementById("material-list");
+  const titleEl = document.getElementById("material-title");
+  const material = dashData.material;
+
+  if (!material || !material.items || material.items.length === 0) {
+    if (material && material.items && material.items.length === 0) {
+      section.style.display = "";
+      titleEl.textContent = "자재 부족 현황";
+      listEl.innerHTML = '<div class="material-ok">자재 정상</div>';
+      if (material.checkedAt) {
+        listEl.innerHTML += `<div class="material-footer">마지막 점검: ${material.checkedAt}</div>`;
+      }
+    } else {
+      section.style.display = "none";
+    }
+    return;
+  }
+
+  section.style.display = "";
+  const summary = material.summary || {};
+  const total = summary.total || material.items.length;
+  const critical = summary.critical || 0;
+  titleEl.textContent = `자재 부족 현황 (${total}건)`;
+  section.style.borderColor = critical > 0 ? "#ef4444" : "#f97316";
+
+  let html = '<div class="material-list">';
+  material.items.forEach(item => {
+    const priority = item.priority || "warning";
+    const processes = (item.담당공정 || []).join("/");
+    const shortage = item.부족수량 || 0;
+    const stock = item.현재재고 || 0;
+    const unit = item.단위 || "";
+    html += `<div class="material-item ${priority}">
+      <div class="material-item-header">
+        <span class="material-item-name" title="${escHtml(item.자재품번 || "")}">${escHtml(item.자재품명 || "")}</span>
+        ${processes ? `<span class="material-item-process">${escHtml(processes)}</span>` : ""}
+      </div>
+      <div class="material-item-detail">
+        <span class="material-shortage">부족 ${Number(shortage).toLocaleString()}${unit}</span>
+        <span class="material-stock">재고 ${Number(stock).toLocaleString()}${unit}</span>
+        ${item.MOQ ? `<span class="material-moq">MOQ: ${Number(item.MOQ).toLocaleString()}${unit}</span>` : ""}
+        ${item.업체 ? `<span class="material-vendor">${escHtml(item.업체)}</span>` : ""}
+      </div>
+    </div>`;
+  });
+  html += '</div>';
+  if (material.checkedAt) {
+    html += `<div class="material-footer">마지막 점검: ${material.checkedAt}</div>`;
+  }
+  listEl.innerHTML = html;
 }
 
 function renderCommonNotices() {
