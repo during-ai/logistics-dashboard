@@ -529,8 +529,19 @@ async function snapshotHistory(env, date) {
   await env.LOGISTICS_KV.put(`history:${date}`, JSON.stringify(snapshot));
 }
 
+/* ── 스케줄러: 매일 09시(KST) 인수인계 리셋 ── */
+async function handleScheduled(env) {
+  const today = getTodayKST();
+  await env.LOGISTICS_KV.delete(`handover:${today}`);
+  console.log(`[cron] handover:${today} 리셋 완료`);
+}
+
 /* ── 메인 핸들러 ── */
 export default {
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(handleScheduled(env));
+  },
+
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 

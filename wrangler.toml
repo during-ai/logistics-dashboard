@@ -7,8 +7,11 @@ bucket = "./public"
 
 [vars]
 MANAGER_PIN = "1234"
-# API_KEY는 wrangler secret으로 관리 (npx wrangler secret put API_KEY)
+API_KEY = "logistics-api-key-2026"
 
 [[kv_namespaces]]
 binding = "LOGISTICS_KV"
 id = "467c8cf17a394194ac595964e0b590bd"
+
+[triggers]
+crons = ["0 0 * * *"]
