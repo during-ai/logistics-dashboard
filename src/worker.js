@@ -326,7 +326,7 @@ async function handleAPI(url, method, request, env) {
 
       const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
       const time = now.toISOString().slice(11, 16);
-      handover[team].unshift({ time, text, author: body.author || "" });
+      handover[team].unshift({ time, text, author: body.author || "", shift: body.shift || "" });
 
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
       return json(201, { ok: true, handover });

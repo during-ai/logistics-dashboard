@@ -78,18 +78,14 @@ function renderMeta() {
 /* ── 데이터 소스 상태 ── */
 function renderStatusStrip() {
   const plan = dashData.plan;
-  const comm = dashData.comm;
-  const chat = dashData.chat;
+  const alerts = dashData.alerts || [];
   let html = "";
   html += plan
     ? '<span><span class="ok">●</span> 생산계획 연동</span>'
     : '<span><span class="pending">○</span> 생산계획 미연동</span>';
-  html += comm
-    ? '<span><span class="ok">●</span> 인수인계 연동</span>'
-    : '<span><span class="pending">○</span> 인수인계 대기</span>';
-  html += chat
-    ? '<span><span class="ok">●</span> 팀 커뮤니케이션 연동</span>'
-    : '<span><span class="pending">○</span> 팀 커뮤니케이션 대기</span>';
+  html += alerts.length > 0
+    ? `<span><span class="warn-dot">●</span> 시스템 경고 ${alerts.length}건</span>`
+    : '<span><span class="ok">●</span> 시스템 정상</span>';
   document.getElementById("status-strip").innerHTML = html;
 }
 
@@ -323,7 +319,6 @@ function renderBoard() {
   const container = document.getElementById("board-container");
   const plan = dashData.plan;
   const notes = dashData.notes || {};
-  const chat = dashData.chat || {};
   const handover = dashData.handover || {};
 
   let html = '<div class="board">';
@@ -339,8 +334,6 @@ function renderBoard() {
     } else {
       html += "</div>"; // close day-panel
     }
-    html += renderChat(chat[team]);
-    html += renderFutureSlot(chat[team]);
     html += renderManualNotes(team, notes[team] || []);
     html += renderHandoverNotes(team, handover[team] || []);
     html += `</div>`;
@@ -426,36 +419,32 @@ function renderResinChanges(teamPlan) {
   return html;
 }
 
-function renderChat(chatText) {
-  if (!chatText) return "";
-  return `<div class="chat-section">
-    <div class="chat-section-title">커뮤니케이션 요약</div>
-    <div class="chat-bubble">${escHtml(chatText)}</div>
-  </div>`;
-}
-
-function renderFutureSlot(chatText) {
-  if (chatText) return ""; // 이미 톡방 데이터가 있으면 미표시
-  return `<div class="future-slot">
-    <span class="future-badge">연동 예정</span> 팀 커뮤니케이션(카카오톡) · 인수인계일지(플로우) 연동 시 자동 표시
-  </div>`;
-}
-
 function renderHandoverNotes(team, handoverList) {
-  let html = `<div class="handover-note">
+  let html = `<div class="handover-card">
+    <div class="handover-card-title">인수인계 사항</div>
     <div class="handover-log" id="hlog-${team}">`;
   if (handoverList.length > 0) {
     handoverList.forEach((entry, idx) => {
+      const authorTag = entry.author ? `<span class="ho-author">${escHtml(entry.author)}</span>` : "";
+      const shiftTag = entry.shift ? `<span class="ho-shift">${escHtml(entry.shift)}</span>` : "";
       html += `<div class="handover-log-item">
-        <span class="hlog-time">${escHtml(entry.time || "")}</span>
-        <span class="hlog-text">${escHtml(entry.text || "")}</span>
+        <div class="ho-meta">${authorTag}${shiftTag}<span class="ho-time">${escHtml(entry.time || "")}</span></div>
+        <div class="ho-text">${escHtml(entry.text || "")}</div>
         <span class="hlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
       </div>`;
     });
+  } else {
+    html += '<div class="ho-empty">등록된 인수인계 없음</div>';
   }
   html += `</div>
-    <div class="handover-note-label">인수인계 <span class="manual-hint">(Enter 입력)</span></div>
-    <input type="text" class="handover-note-input" data-team="${team}" placeholder="인수인계 사항 입력 후 Enter...">
+    <div class="handover-input-row">
+      <input type="text" class="handover-author-input" data-team="${team}" placeholder="이름" id="ho-author-${team}">
+      <select class="handover-shift-select" data-team="${team}" id="ho-shift-${team}">
+        <option value="주간→야간">주간→야간</option>
+        <option value="야간→주간">야간→주간</option>
+      </select>
+    </div>
+    <input type="text" class="handover-note-input" data-team="${team}" placeholder="인수인계 내용 입력 후 Enter...">
   </div>`;
   return html;
 }
@@ -539,12 +528,16 @@ function bindHandoverInputs() {
       const text = input.value.trim();
       if (!text) return;
       const team = input.dataset.team;
+      const authorEl = document.getElementById(`ho-author-${team}`);
+      const shiftEl = document.getElementById(`ho-shift-${team}`);
+      const author = authorEl ? authorEl.value.trim() : "";
+      const shift = shiftEl ? shiftEl.value : "";
       input.disabled = true;
       try {
         const res = await fetch("api/handover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ date: currentDate, team, text }),
+          body: JSON.stringify({ date: currentDate, team, text, author, shift }),
         });
         if (res.ok) {
           input.value = "";
