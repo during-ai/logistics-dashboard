@@ -220,7 +220,8 @@ body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, "Segoe
 
 .board-main { flex: 1; min-width: 0; }
 
-.board { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; align-items:start; }
+.board { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; align-items:stretch; }
+.team-col { display:flex; flex-direction:column; }
 .team-col { background:var(--surface-1); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
 .team-col-head { display:flex; align-items:center; gap:7px; margin-bottom:10px; padding-bottom:8px; border-bottom:2px solid var(--gridline); }
 .dot { width:10px; height:10px; border-radius:50%; display:inline-block; flex:none; }
@@ -370,7 +371,7 @@ body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, "Segoe
 
 /* ── 인수인계 카드 섹션 (팀 컬럼 내) ── */
 .handover-card {
-  margin-top: 10px; padding: 10px 12px;
+  margin-top: auto; padding: 10px 12px;
   background: var(--surface-1); border: 1px solid var(--series-blue);
   border-radius: 8px; border-left: 3px solid var(--series-blue);
 }
