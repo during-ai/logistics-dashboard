@@ -105,6 +105,7 @@
     <button class="tab-btn" data-tab="staff">인원현황</button>
     <button class="tab-btn" data-tab="bom">BOM</button>
     <button class="tab-btn" data-tab="chat">톡방 요약</button>
+    <button class="tab-btn" data-tab="report">주간보고</button>
   </div>
 
   <!-- ── 생산계획 ── -->
@@ -218,6 +219,20 @@
       </div>
       <button class="btn btn-primary" id="btn-bom-save">업로드 및 저장</button>
       <div id="bom-result"></div>
+    </div>
+  </div>
+
+  <!-- ── 주간보고 ── -->
+  <div class="tab-content" id="tab-report">
+    <div class="section">
+      <h2>주간업무보고 다운로드</h2>
+      <p style="font-size:11px;color:var(--text-muted);margin:0 0 12px;">
+        매주 월요일 08시 자동 생성됩니다. 현황판 데이터(전달사항, 경고, 인수인계) 기반으로 양식이 채워집니다.
+      </p>
+      <div id="report-list" style="margin-bottom:12px;">
+        <div style="font-size:12px;color:var(--text-muted);">로딩 중...</div>
+      </div>
+      <button class="btn btn-secondary" id="btn-report-refresh" style="font-size:11px;">새로고침</button>
     </div>
   </div>
 
@@ -680,6 +695,37 @@
       showResult("plan-result", false, "네트워크 오류");
     }
   });
+
+  /* ── 주간보고 다운로드 ── */
+  async function loadReportList() {
+    const el = document.getElementById("report-list");
+    try {
+      const res = await fetch("api/report/list");
+      if (!res.ok) { el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">보고서 없음</div>'; return; }
+      const { reports } = await res.json();
+      if (!reports || reports.length === 0) {
+        el.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">생성된 보고서가 없습니다.</div>';
+        return;
+      }
+      let html = '<div style="display:flex;flex-direction:column;gap:6px;">';
+      reports.forEach(r => {
+        const created = r.createdAt ? new Date(r.createdAt).toLocaleString("ko-KR") : "";
+        html += `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--page-plane);border:1px solid var(--border);border-radius:6px;">
+          <div style="flex:1;">
+            <div style="font-size:12px;font-weight:600;">${esc(r.filename || "")}</div>
+            <div style="font-size:10px;color:var(--text-muted);">${r.weekStart} ~ ${r.weekEnd} · 생성: ${created}</div>
+          </div>
+          <a href="api/report/download/${r.weekStart}" class="btn btn-primary" style="font-size:11px;padding:5px 12px;text-decoration:none;">다운로드</a>
+        </div>`;
+      });
+      html += '</div>';
+      el.innerHTML = html;
+    } catch {
+      el.innerHTML = '<div style="font-size:12px;color:var(--status-critical);">로드 실패</div>';
+    }
+  }
+  loadReportList();
+  document.getElementById("btn-report-refresh").addEventListener("click", loadReportList);
 
   /* ── 톡방 요약 ── */
   document.getElementById("btn-chat-save").addEventListener("click", async () => {

@@ -424,6 +424,75 @@ async function handleAPI(url, method, request, env) {
     } catch { return json(400, { message: "Invalid JSON" }); }
   }
 
+  // ── POST /api/report/upload (API_KEY 인증 — 주간보고서 업로드) ──
+  if (method === "POST" && p === "/api/report/upload") {
+    const apiKey = request.headers.get("X-API-Key");
+    if (!apiKey || apiKey !== env.API_KEY) {
+      return json(401, { message: "Invalid API key" });
+    }
+    try {
+      const body = await request.json();
+      const key = `report:${body.weekStart || "latest"}`;
+      await env.LOGISTICS_KV.put(key, JSON.stringify({
+        filename: body.filename || "주간업무보고.xlsx",
+        data: body.data,
+        weekStart: body.weekStart,
+        weekEnd: body.weekEnd,
+        createdAt: body.createdAt || new Date().toISOString(),
+      }));
+      // 최신 키도 갱신
+      await env.LOGISTICS_KV.put("report:latest", JSON.stringify({
+        filename: body.filename,
+        weekStart: body.weekStart,
+        weekEnd: body.weekEnd,
+        createdAt: body.createdAt || new Date().toISOString(),
+      }));
+      return json(200, { ok: true, key });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
+  // ── GET /api/report/latest (최신 보고서 메타) ──
+  if (method === "GET" && p === "/api/report/latest") {
+    const raw = await env.LOGISTICS_KV.get("report:latest");
+    if (!raw) return json(404, { message: "보고서 없음" });
+    return json(200, JSON.parse(raw));
+  }
+
+  // ── GET /api/report/download/:weekStart (보고서 다운로드) ──
+  const reportDlMatch = p.match(/^\/api\/report\/download\/(.+)$/);
+  if (method === "GET" && reportDlMatch) {
+    const weekStart = reportDlMatch[1];
+    const raw = await env.LOGISTICS_KV.get(`report:${weekStart}`);
+    if (!raw) return json(404, { message: "해당 보고서 없음" });
+    const report = JSON.parse(raw);
+    const binary = Uint8Array.from(atob(report.data), c => c.charCodeAt(0));
+    return new Response(binary, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(report.filename)}`,
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
+  // ── GET /api/report/list (보고서 목록) ──
+  if (method === "GET" && p === "/api/report/list") {
+    const list = await env.LOGISTICS_KV.list({ prefix: "report:" });
+    const reports = [];
+    for (const k of list.keys) {
+      if (k.name === "report:latest") continue;
+      const raw = await env.LOGISTICS_KV.get(k.name);
+      if (raw) {
+        const r = JSON.parse(raw);
+        reports.push({ weekStart: r.weekStart, weekEnd: r.weekEnd, filename: r.filename, createdAt: r.createdAt });
+      }
+    }
+    reports.sort((a, b) => (b.weekStart || "").localeCompare(a.weekStart || ""));
+    return json(200, { reports });
+  }
+
   // ── GET /api/history ──
   if (method === "GET" && p === "/api/history") {
     const list = await env.LOGISTICS_KV.list({ prefix: "history:" });
