@@ -129,12 +129,11 @@ function renderStaff() {
   el.innerHTML = html;
 }
 
-/* ── 사이드바: 경고 + 공통 공지 + 주간 캘린더 + 인수인계 ── */
+/* ── 사이드바: 경고 + 공통 공지 + 주간 캘린더 ── */
 function renderSidebar() {
   renderAlerts();
   renderCommonNotices();
   renderWeekCalendar();
-  renderHandover();
   bindCommonNoteInput();
 }
 
@@ -177,31 +176,6 @@ function renderAlerts() {
       } catch { flashStatus("처리 실패"); }
     });
   });
-}
-
-function renderHandover() {
-  const el = document.getElementById("handover-content");
-  const handover = dashData.handover;
-
-  if (!handover || !handover.entries || handover.entries.length === 0) {
-    el.innerHTML = '<div class="sidebar-empty">인수인계 내용 없음</div>';
-    return;
-  }
-
-  let html = '';
-  handover.entries.forEach(entry => {
-    html += `<div class="handover-entry">
-      <div class="handover-header">
-        <span class="handover-shift">${escHtml(entry.shift || "")}</span>
-        <span class="handover-meta">${escHtml(entry.author || "")} ${escHtml(entry.time || "")}</span>
-      </div>
-      <ul class="handover-items">`;
-    (entry.items || []).forEach(item => {
-      html += `<li>${escHtml(item)}</li>`;
-    });
-    html += `</ul></div>`;
-  });
-  el.innerHTML = html;
 }
 
 function renderCommonNotices() {
@@ -350,6 +324,7 @@ function renderBoard() {
   const plan = dashData.plan;
   const notes = dashData.notes || {};
   const chat = dashData.chat || {};
+  const handover = dashData.handover || {};
 
   let html = '<div class="board">';
   TEAMS.forEach((team, idx) => {
@@ -367,6 +342,7 @@ function renderBoard() {
     html += renderChat(chat[team]);
     html += renderFutureSlot(chat[team]);
     html += renderManualNotes(team, notes[team] || []);
+    html += renderHandoverNotes(team, handover[team] || []);
     html += `</div>`;
   });
   html += "</div>";
@@ -375,6 +351,8 @@ function renderBoard() {
   // 이벤트 바인딩
   bindNoteInputs();
   bindNoteDeletes();
+  bindHandoverInputs();
+  bindHandoverDeletes();
 }
 
 function renderTeamHeader(team, idx, teamPlan) {
@@ -463,6 +441,25 @@ function renderFutureSlot(chatText) {
   </div>`;
 }
 
+function renderHandoverNotes(team, handoverList) {
+  let html = `<div class="handover-note">
+    <div class="handover-log" id="hlog-${team}">`;
+  if (handoverList.length > 0) {
+    handoverList.forEach((entry, idx) => {
+      html += `<div class="handover-log-item">
+        <span class="hlog-time">${escHtml(entry.time || "")}</span>
+        <span class="hlog-text">${escHtml(entry.text || "")}</span>
+        <span class="hlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
+      </div>`;
+    });
+  }
+  html += `</div>
+    <div class="handover-note-label">인수인계 <span class="manual-hint">(Enter 입력)</span></div>
+    <input type="text" class="handover-note-input" data-team="${team}" placeholder="인수인계 사항 입력 후 Enter...">
+  </div>`;
+  return html;
+}
+
 function renderManualNotes(team, notesList) {
   let html = `<div class="manual-note">
     <div class="manual-log" id="log-${team}">`;
@@ -521,6 +518,57 @@ function bindNoteDeletes() {
       const idx = btn.dataset.idx;
       try {
         const res = await fetch(`api/notes/persistent/${encodeURIComponent(team)}/${idx}`, {
+          method: "DELETE",
+        });
+        if (res.ok) {
+          flashStatus("삭제됨");
+          await loadDashboard(currentDate);
+        }
+      } catch {
+        flashStatus("삭제 실패");
+      }
+    });
+  });
+}
+
+function bindHandoverInputs() {
+  document.querySelectorAll(".handover-note-input").forEach(input => {
+    input.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      const team = input.dataset.team;
+      input.disabled = true;
+      try {
+        const res = await fetch("api/handover", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ date: currentDate, team, text }),
+        });
+        if (res.ok) {
+          input.value = "";
+          flashStatus("저장됨");
+          await loadDashboard(currentDate);
+        } else {
+          flashStatus("저장 실패");
+        }
+      } catch {
+        flashStatus("네트워크 오류");
+      }
+      input.disabled = false;
+      input.focus();
+    });
+  });
+}
+
+function bindHandoverDeletes() {
+  document.querySelectorAll(".hlog-del").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const team = btn.dataset.team;
+      const idx = btn.dataset.idx;
+      try {
+        const res = await fetch(`api/handover/${currentDate}/${encodeURIComponent(team)}/${idx}`, {
           method: "DELETE",
         });
         if (res.ok) {

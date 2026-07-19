@@ -310,7 +310,46 @@ async function handleAPI(url, method, request, env) {
     return json(200, { ok: true });
   }
 
-  // ── POST /api/handover/push (API_KEY 인증) ──
+  // ── POST /api/handover (인수인계 추가 — 팀별) ──
+  if (method === "POST" && p === "/api/handover") {
+    try {
+      const body = await request.json();
+      const team = body.team;
+      const text = (body.text || "").trim();
+      if (!team || !text) return json(400, { message: "team, text 필수" });
+
+      const date = body.date || getTodayKST();
+      const key = `handover:${date}`;
+      const raw = await env.LOGISTICS_KV.get(key);
+      const handover = raw ? JSON.parse(raw) : { "권선": [], "사출": [], "전장": [] };
+      if (!handover[team]) handover[team] = [];
+
+      const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+      const time = now.toISOString().slice(11, 16);
+      handover[team].unshift({ time, text, author: body.author || "" });
+
+      await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      return json(201, { ok: true, handover });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
+  // ── DELETE /api/handover/:date/:team/:idx ──
+  const handoverDelMatch = p.match(/^\/api\/handover\/([^/]+)\/([^/]+)\/(\d+)$/);
+  if (method === "DELETE" && handoverDelMatch) {
+    const [, hDate, team, idxStr] = handoverDelMatch;
+    const decodedTeam = decodeURIComponent(team);
+    const idx = parseInt(idxStr);
+    const key = `handover:${hDate}`;
+    const raw = await env.LOGISTICS_KV.get(key);
+    const handover = raw ? JSON.parse(raw) : {};
+    if (handover[decodedTeam] && idx >= 0 && idx < handover[decodedTeam].length) {
+      handover[decodedTeam].splice(idx, 1);
+      await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+    }
+    return json(200, { ok: true, handover });
+  }
+
+  // ── POST /api/handover/push (API_KEY 인증 — 자동 연동용) ──
   if (method === "POST" && p === "/api/handover/push") {
     const apiKey = request.headers.get("X-API-Key");
     if (!apiKey || apiKey !== env.API_KEY) {
@@ -321,21 +360,28 @@ async function handleAPI(url, method, request, env) {
       const date = body.date || getTodayKST();
       const key = `handover:${date}`;
       const raw = await env.LOGISTICS_KV.get(key);
-      const existing = raw ? JSON.parse(raw) : { date, entries: [] };
+      const handover = raw ? JSON.parse(raw) : { "권선": [], "사출": [], "전장": [] };
 
-      const newEntries = body.entries || [];
-      for (const entry of newEntries) {
-        // 중복 방지: shift + author + time 동일하면 스킵
-        const dup = existing.entries.some(e =>
-          e.shift === entry.shift && e.author === entry.author && e.time === entry.time
-        );
-        if (!dup) {
-          existing.entries.push(entry);
+      // entries에 team 필드가 있으면 해당 팀에 추가
+      const entries = body.entries || [];
+      for (const entry of entries) {
+        const team = entry.team || "권선";
+        if (!handover[team]) handover[team] = [];
+        const text = entry.items ? entry.items.join(" / ") : (entry.text || "");
+        if (text) {
+          const dup = handover[team].some(h => h.text === text);
+          if (!dup) {
+            handover[team].unshift({
+              time: entry.time || "",
+              text,
+              author: entry.author || "",
+            });
+          }
         }
       }
 
-      await env.LOGISTICS_KV.put(key, JSON.stringify(existing));
-      return json(200, { ok: true, date, total: existing.entries.length });
+      await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      return json(200, { ok: true, date });
     } catch { return json(400, { message: "Invalid JSON" }); }
   }
 
@@ -456,7 +502,7 @@ async function serveDashboard(env, date) {
     weekPlanDates,
     calendarEvents,
     alerts: activeAlerts,
-    handover: handoverRaw ? JSON.parse(handoverRaw) : null,
+    handover: handoverRaw ? JSON.parse(handoverRaw) : { "권선": [], "사출": [], "전장": [] },
   });
 }
 
