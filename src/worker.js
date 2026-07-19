@@ -485,6 +485,31 @@ async function serveDashboard(env, date) {
     if (exists) weekPlanDates.push(wdStr);
   }
 
+  // plan notices: 연속 3일 이상 중복 항목 필터링
+  if (plan && plan.teams) {
+    const prev1 = getPrevDateKST(date);
+    const prev2 = getPrevDateKST(prev1);
+    const [prev1Raw, prev2Raw] = await Promise.all([
+      env.LOGISTICS_KV.get(`plan:${prev1}`),
+      env.LOGISTICS_KV.get(`plan:${prev2}`),
+    ]);
+    const prev1Plan = prev1Raw ? JSON.parse(prev1Raw) : null;
+    const prev2Plan = prev2Raw ? JSON.parse(prev2Raw) : null;
+
+    for (const team of Object.keys(plan.teams)) {
+      const notices = plan.teams[team]?.notices;
+      if (!notices || notices.length === 0) continue;
+      const prev1Notices = prev1Plan?.teams?.[team]?.notices || [];
+      const prev2Notices = prev2Plan?.teams?.[team]?.notices || [];
+      const prev1Texts = new Set(prev1Notices.map(n => n.text));
+      const prev2Texts = new Set(prev2Notices.map(n => n.text));
+      // 3일 연속 존재하는 항목 제거
+      plan.teams[team].notices = notices.filter(n =>
+        !(prev1Texts.has(n.text) && prev2Texts.has(n.text))
+      );
+    }
+  }
+
   // alerts: active 항목만 필터
   const allAlerts = alertsRaw ? JSON.parse(alertsRaw) : [];
   const activeAlerts = allAlerts.filter(a => a.active !== false);

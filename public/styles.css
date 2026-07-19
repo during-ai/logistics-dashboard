@@ -18,7 +18,7 @@
 * { box-sizing: border-box; }
 html { background: var(--page-plane); }
 body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--page-plane); color: var(--text-primary); }
-.viz-root { padding: 10px 20px 14px; max-width: 1440px; margin: 0 auto; }
+.viz-root { padding: 10px 20px 14px; }
 
 .top-bar { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px; }
 .top-bar h1 { font-size:18px; margin:0; letter-spacing:-0.3px; }
