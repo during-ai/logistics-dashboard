@@ -58,7 +58,7 @@ async function handleAPI(url, method, request, env) {
     return serveDashboard(env, dashMatch[1]);
   }
 
-  // ── POST /api/plan/push (API_KEY 인증) ──
+  // ── POST /api/plan/push (API_KEY 인증, 팀별 merge) ──
   if (method === "POST" && p === "/api/plan/push") {
     const apiKey = request.headers.get("X-API-Key");
     if (!apiKey || apiKey !== env.API_KEY) {
@@ -67,9 +67,32 @@ async function handleAPI(url, method, request, env) {
     try {
       const body = await request.json();
       const date = body.date || getTodayKST();
-      await env.LOGISTICS_KV.put(`plan:${date}`, JSON.stringify(body));
+      // 기존 데이터 로드 → 팀별 merge
+      const existingRaw = await env.LOGISTICS_KV.get(`plan:${date}`);
+      const existing = existingRaw ? JSON.parse(existingRaw) : {};
+      if (!existing.teams) existing.teams = {};
+      // 새로 push된 팀만 갱신, 나머지 유지
+      const pushedTeams = [];
+      if (body.teams) {
+        for (const [team, data] of Object.entries(body.teams)) {
+          existing.teams[team] = data;
+          pushedTeams.push(team);
+        }
+      }
+      // KPI를 전체 팀 기준으로 재계산
+      let linesDay = 0, linesNight = 0, switchCount = 0, resumeCount = 0;
+      for (const data of Object.values(existing.teams)) {
+        linesDay += (data.lines?.day || 0);
+        linesNight += (data.lines?.night || 0);
+        switchCount += (data.switches?.length || 0);
+      }
+      existing.date = date;
+      existing.kpi = { linesDay, linesNight, switchCount, resumeCount };
+      existing.pushedAt = body.pushedAt || new Date(Date.now() + 9*3600000).toISOString();
+      existing.source = body.source || "production_plan_push.py";
+      await env.LOGISTICS_KV.put(`plan:${date}`, JSON.stringify(existing));
       await snapshotHistory(env, date);
-      return json(200, { ok: true, date });
+      return json(200, { ok: true, date, merged: pushedTeams });
     } catch { return json(400, { message: "Invalid JSON" }); }
   }
 
@@ -216,6 +239,24 @@ async function handleAPI(url, method, request, env) {
     } catch { return json(400, { message: "Invalid request" }); }
   }
 
+  // ── PUT /api/notices/common/reorder ──
+  if (method === "PUT" && p === "/api/notices/common/reorder") {
+    try {
+      const body = await request.json();
+      const from = body.from;
+      const to = body.to;
+      const raw = await env.LOGISTICS_KV.get("notices:common");
+      const notices = raw ? JSON.parse(raw) : [];
+      if (from < 0 || from >= notices.length || to < 0 || to >= notices.length) {
+        return json(400, { message: "Invalid index" });
+      }
+      const [item] = notices.splice(from, 1);
+      notices.splice(to, 0, item);
+      await env.LOGISTICS_KV.put("notices:common", JSON.stringify(notices));
+      return json(200, { ok: true });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
   // ── DELETE /api/notices/common/:idx ──
   const commonDelMatch = p.match(/^\/api\/notices\/common\/(\d+)$/);
   if (method === "DELETE" && commonDelMatch) {
@@ -262,6 +303,16 @@ async function handleAPI(url, method, request, env) {
     return json(200, { ok: true });
   }
 
+  // ── GET /api/calendar/events/:date (특정 날짜 일정 조회) ──
+  const calGetMatch = p.match(/^\/api\/calendar\/events\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === "GET" && calGetMatch) {
+    const evDate = calGetMatch[1];
+    const weekKey = getWeekKey(evDate);
+    const raw = await env.LOGISTICS_KV.get(`calendar:${weekKey}`);
+    const cal = raw ? JSON.parse(raw) : {};
+    return json(200, { date: evDate, events: cal[evDate] || [] });
+  }
+
   // ── POST /api/material/push (API_KEY 인증) ──
   if (method === "POST" && p === "/api/material/push") {
     const apiKey = request.headers.get("X-API-Key");
@@ -271,9 +322,40 @@ async function handleAPI(url, method, request, env) {
     try {
       const body = await request.json();
       const date = body.date || getTodayKST();
+      // 기존 데이터에서 received 상태 보존 (자재품번 기준)
+      const oldRaw = await env.LOGISTICS_KV.get(`material:${date}`);
+      if (oldRaw && body.items) {
+        const old = JSON.parse(oldRaw);
+        const recvMap = {};
+        (old.items || []).forEach(it => {
+          if (it.received) recvMap[it["자재품번"]] = { received: true, receivedAt: it.receivedAt || null };
+        });
+        body.items.forEach(it => {
+          const prev = recvMap[it["자재품번"]];
+          if (prev) { it.received = true; it.receivedAt = prev.receivedAt; }
+        });
+      }
       await env.LOGISTICS_KV.put(`material:${date}`, JSON.stringify(body));
       return json(200, { ok: true, date, total: (body.items || []).length });
     } catch { return json(400, { message: "Invalid JSON" }); }
+  }
+
+  // ── POST /api/material/:date/received/:idx (입고 확인 토글) ──
+  const materialReceivedMatch = p.match(/^\/api\/material\/(\d{4}-\d{2}-\d{2})\/received\/(\d+)$/);
+  if (method === "POST" && materialReceivedMatch) {
+    const [, mDate, idxStr] = materialReceivedMatch;
+    const idx = parseInt(idxStr);
+    const raw = await env.LOGISTICS_KV.get(`material:${mDate}`);
+    if (!raw) return json(404, { message: "해당 날짜 자재 데이터 없음" });
+    const material = JSON.parse(raw);
+    if (!material.items || idx < 0 || idx >= material.items.length) {
+      return json(400, { message: "Invalid index" });
+    }
+    const wasReceived = material.items[idx].received;
+    material.items[idx].received = !wasReceived;
+    material.items[idx].receivedAt = !wasReceived ? new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString() : null;
+    await env.LOGISTICS_KV.put(`material:${mDate}`, JSON.stringify(material));
+    return json(200, { ok: true, material });
   }
 
   // ── GET /api/material/:date ──

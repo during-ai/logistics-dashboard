@@ -4,37 +4,34 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>물류 파트 Daily Production Report</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=20260720t">
 <link rel="icon" href="icons/icon.svg">
 </head>
 <body>
 <div class="viz-root">
 
-  <div class="note-toolbar-row">
-    <span class="today-label">기준일 <span class="tab-date" id="tab-date">-</span></span>
-    <div class="note-toolbar">
-      <div class="date-nav">
-        <input type="date" id="date-picker">
-        <button type="button" id="btn-today">오늘</button>
-      </div>
+  <div class="unified-header">
+    <h1>Production Daily Report</h1>
+    <span class="hdr-date" id="tab-date">-</span>
+    <span class="hdr-status" id="hdr-status"></span>
+    <span class="hdr-meta" id="meta-info"></span>
+    <div class="hdr-kpi">
+      <span class="hdr-kpi-label">생산팀가동 현황</span>
+      <span class="hdr-kpi-item"><span class="kl">주간</span><b id="kpi-day">-</b></span>
+      <span class="hdr-kpi-item"><span class="kl">야간</span><b id="kpi-night">-</b></span>
+      <span class="hdr-kpi-item kpi-warn"><span class="kl">변경</span><b id="kpi-switch">-</b></span>
+      <span class="hdr-kpi-item"><span class="kl">재가동</span><b id="kpi-resume">-</b></span>
+      <span class="hdr-kpi-sep"></span>
+      <span class="hdr-kpi-label">물류 인원현황</span>
+      <span id="hdr-staff" class="hdr-staff"></span>
+    </div>
+    <div class="hdr-tools">
+      <input type="date" id="date-picker">
+      <button type="button" id="btn-today">오늘</button>
       <span id="note-status" class="note-status"></span>
       <button type="button" class="toolbar-btn" id="btn-search">검색</button>
       <a href="admin.html" class="toolbar-btn">관리</a>
     </div>
-  </div>
-
-  <div class="top-bar">
-    <h1>Production Daily Report</h1>
-    <div class="meta" id="meta-info">로딩 중...</div>
-  </div>
-
-  <div class="status-strip" id="status-strip">
-    <span><span class="pending">○</span> 데이터 로딩 중</span>
-  </div>
-
-  <div class="staff-strip" id="staff-strip">
-    <div class="staff-label">투입인원</div>
-    <div class="staff-team"><span class="staff-team-name">데이터 없음</span></div>
   </div>
 
   <div class="main-layout">
@@ -65,12 +62,6 @@
 
     <!-- 우측 메인 보드 -->
     <div class="board-main">
-      <div class="kpi-strip" id="kpi-strip">
-        <div class="kpi-tile"><span class="label">주간 가동</span><span class="value" id="kpi-day">-</span></div>
-        <div class="kpi-tile"><span class="label">야간 가동</span><span class="value" id="kpi-night">-</span></div>
-        <div class="kpi-tile switch-kpi"><span class="label">ITEM 변경</span><span class="value" id="kpi-switch">-</span></div>
-        <div class="kpi-tile"><span class="label">재가동</span><span class="value" id="kpi-resume">-</span></div>
-      </div>
       <div id="board-container">
         <div class="loading-overlay">데이터 로딩 중...</div>
       </div>
@@ -94,6 +85,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260720t"></script>
 </body>
 </html>

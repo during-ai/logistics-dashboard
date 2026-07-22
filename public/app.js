@@ -1,6 +1,6 @@
 /* ── 물류 파트 현황판 — 클라이언트 ── */
 
-const TEAMS = ["권선", "사출", "전장"];
+const TEAMS = ["사출", "전장", "권선"];
 const TEAM_COLORS = { "권선": "team-1", "사출": "team-2", "전장": "team-3" };
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -8,7 +8,9 @@ let currentDate = todayKST();
 let dashData = null;
 let refreshTimer = null;
 let prevAlertCount = 0;
-let alertSoundPlayed = false;
+let prevNoteCount = 0;
+let prevCommonCount = 0;
+let lastRefreshTime = null;
 
 /* ── 유틸 ── */
 function todayKST() {
@@ -34,6 +36,16 @@ function flashStatus(msg) {
   setTimeout(() => { el.textContent = ""; }, 3000);
 }
 
+/* ── 사용자가 입력/선택 중인지 판별 (자동 새로고침이 입력창을 지우는 것 방지) ── */
+function isUserTyping() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  if (el.isContentEditable) return true;
+  return false;
+}
+
 /* ── 경고 알림음 (Web Audio API) ── */
 function playAlertSound() {
   try {
@@ -53,22 +65,44 @@ function playAlertSound() {
   } catch {}
 }
 
+function blinkTitle(message) {
+  let blink = 0;
+  const orig = document.title;
+  const iv = setInterval(() => {
+    document.title = blink % 2 === 0 ? message : orig;
+    blink++;
+    if (blink > 10) { clearInterval(iv); document.title = orig; }
+  }, 500);
+}
+
 function checkAlertNotification() {
   const alerts = dashData?.alerts || [];
   const criticalCount = alerts.filter(a => a.priority === "critical").length;
-  if (criticalCount > 0 && alerts.length > prevAlertCount && !alertSoundPlayed) {
+  if (criticalCount > 0 && alerts.length > prevAlertCount) {
     playAlertSound();
-    alertSoundPlayed = true;
-    // 화면 타이틀 깜빡임
-    let blink = 0;
-    const orig = document.title;
-    const blinkInterval = setInterval(() => {
-      document.title = blink % 2 === 0 ? "⚠ 긴급 경고 발생!" : orig;
-      blink++;
-      if (blink > 10) { clearInterval(blinkInterval); document.title = orig; }
-    }, 500);
+    blinkTitle("!! 긴급 경고 발생 !!");
   }
   prevAlertCount = alerts.length;
+}
+
+function checkNoteNotification() {
+  const notes = dashData?.notes || {};
+  const common = dashData?.commonNotices || [];
+  let noteCount = 0;
+  for (const team of Object.keys(notes)) {
+    noteCount += (notes[team] || []).length;
+  }
+  const commonCount = common.length;
+  if (prevNoteCount > 0 && noteCount > prevNoteCount) {
+    playAlertSound();
+    blinkTitle("** 새 전달사항 **");
+  }
+  if (prevCommonCount > 0 && commonCount > prevCommonCount) {
+    playAlertSound();
+    blinkTitle("** 새 공지사항 **");
+  }
+  prevNoteCount = noteCount;
+  prevCommonCount = commonCount;
 }
 
 /* ── 데이터 로드 ── */
@@ -77,66 +111,51 @@ async function loadDashboard(date) {
     const res = await fetch(`api/dashboard/${date}`);
     if (!res.ok) throw new Error("fetch failed");
     dashData = await res.json();
+    lastRefreshTime = new Date();
     render();
   } catch (e) {
     console.error("Dashboard load error:", e);
     document.getElementById("board-container").innerHTML =
-      '<div class="loading-overlay">데이터 연동 실패 — 네트워크 상태를 확인하세요.</div>';
+      '<div class="loading-overlay">데이터 연동 실패 — 5초 후 재시도합니다.</div>';
+    setTimeout(() => loadDashboard(date), 5000);
   }
 }
 
 /* ── 메인 렌더 ── */
 function render() {
   if (!dashData) return;
-  renderMeta();
-  renderStatusStrip();
-  renderKPI();
-  renderStaff();
+  renderHeader();
   renderSidebar();
   renderBoard();
   checkAlertNotification();
+  checkNoteNotification();
 }
 
-/* ── 상단 메타 ── */
-function renderMeta() {
+/* ── 통합 헤더 ── */
+function renderHeader() {
   const plan = dashData.plan;
-  const dateLabel = formatDateLabel(dashData.date);
-  let extra = "";
+  document.getElementById("tab-date").textContent = formatDateLabel(dashData.date);
+
+  // 연동 상태
+  document.getElementById("hdr-status").innerHTML = plan
+    ? '<span class="ok">●</span> 연동'
+    : '<span class="pending">○</span> 미연동';
+
+  // 메타 (업데이트 시각)
+  const parts = [];
   if (dashData.fallbackDate) {
-    extra = ` · ${formatDateLabel(dashData.fallbackDate)} 계획 이월 적용`;
+    parts.push(`${formatDateLabel(dashData.fallbackDate)} 이월`);
   }
   if (plan && plan.pushedAt) {
     const t = new Date(plan.pushedAt);
-    extra += ` · 업데이트 ${t.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`;
+    parts.push(`업데이트 ${t.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`);
   }
-  const dow = DAY_NAMES[new Date(dashData.date + "T12:00:00+09:00").getDay()];
-  document.getElementById("meta-info").textContent =
-    `${dashData.date}(${dow}) · 권선·사출·전장 생산계획 기준${extra}`;
-  document.getElementById("tab-date").textContent = dateLabel;
-}
+  if (lastRefreshTime && currentDate === todayKST()) {
+    parts.push(`갱신 ${lastRefreshTime.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`);
+  }
+  document.getElementById("meta-info").textContent = parts.join(" · ");
 
-/* ── 데이터 소스 상태 ── */
-function renderStatusStrip() {
-  const plan = dashData.plan;
-  const alerts = dashData.alerts || [];
-  let html = "";
-  html += plan
-    ? '<span><span class="ok">●</span> 생산계획 연동</span>'
-    : '<span><span class="pending">○</span> 생산계획 미연동</span>';
-  html += alerts.length > 0
-    ? `<span><span class="warn-dot">●</span> 시스템 경고 ${alerts.length}건</span>`
-    : '<span><span class="ok">●</span> 시스템 정상</span>';
-  const material = dashData.material;
-  const matCount = material && material.items ? material.items.length : 0;
-  html += matCount > 0
-    ? `<span><span class="warn-dot">●</span> 자재 부족 ${matCount}건</span>`
-    : (material ? '<span><span class="ok">●</span> 자재 정상</span>' : '');
-  document.getElementById("status-strip").innerHTML = html;
-}
-
-/* ── KPI ── */
-function renderKPI() {
-  const plan = dashData.plan;
+  // KPI
   if (plan && plan.kpi) {
     document.getElementById("kpi-day").textContent = plan.kpi.linesDay || 0;
     document.getElementById("kpi-night").textContent = plan.kpi.linesNight || 0;
@@ -147,27 +166,22 @@ function renderKPI() {
       document.getElementById(id).textContent = "-";
     });
   }
-}
 
-/* ── 인원현황 ── */
-function renderStaff() {
+  // 인원현황
+  const staffEl = document.getElementById("hdr-staff");
   const staff = dashData.staff;
-  const el = document.getElementById("staff-strip");
-  if (!staff || !staff.teams) {
-    el.innerHTML = '<div class="staff-label">투입인원</div><div class="staff-team"><span class="staff-team-name">미등록</span></div>';
-    return;
+  if (staff && staff.teams) {
+    let shtml = "";
+    for (const t of Object.keys(staff.teams)) {
+      const s = staff.teams[t];
+      if (!s) continue;
+      const vacancy = (s.total || 0) - (s.current || 0);
+      shtml += `<span class="hdr-staff-team"><span class="hdr-staff-name">${escHtml(t)}</span>${s.current || 0}<span class="hdr-staff-total">/${s.total || 0}</span>${vacancy > 0 ? `<span class="staff-vacancy">결원${vacancy}</span>` : ""}</span>`;
+    }
+    staffEl.innerHTML = shtml;
+  } else {
+    staffEl.innerHTML = "";
   }
-  let html = '<div class="staff-label">투입인원</div>';
-  for (const t of Object.keys(staff.teams)) {
-    const s = staff.teams[t];
-    const vacancy = (s.total || 0) - (s.current || 0);
-    html += `<div class="staff-team">
-      <span class="staff-team-name">${escHtml(t)}</span>
-      <span class="staff-count">${s.current || 0}<span class="staff-count-total">/${s.total || 0}명</span></span>
-      ${vacancy > 0 ? `<span class="staff-vacancy">결원 ${vacancy}</span>` : ""}
-    </div>`;
-  }
-  el.innerHTML = html;
 }
 
 /* ── 사이드바: 경고 + 공통 공지 + 주간 캘린더 ── */
@@ -226,16 +240,16 @@ function renderMaterial() {
   const titleEl = document.getElementById("material-title");
   const material = dashData.material;
 
-  if (!material || !material.items || material.items.length === 0) {
-    if (material && material.items && material.items.length === 0) {
-      section.style.display = "";
-      titleEl.textContent = "자재 부족 현황";
-      listEl.innerHTML = '<div class="material-ok">자재 정상</div>';
-      if (material.checkedAt) {
-        listEl.innerHTML += `<div class="material-footer">마지막 점검: ${material.checkedAt}</div>`;
-      }
-    } else {
-      section.style.display = "none";
+  if (!material || !material.items) {
+    section.style.display = "none";
+    return;
+  }
+  if (material.items.length === 0) {
+    section.style.display = "";
+    titleEl.textContent = "자재 부족 현황";
+    listEl.innerHTML = '<div class="material-ok">자재 정상</div>';
+    if (material.checkedAt) {
+      listEl.innerHTML += `<div class="material-footer">마지막 점검: ${material.checkedAt}</div>`;
     }
     return;
   }
@@ -248,14 +262,16 @@ function renderMaterial() {
   section.style.borderColor = critical > 0 ? "#ef4444" : "#f97316";
 
   let html = '<div class="material-list">';
-  material.items.forEach(item => {
+  material.items.forEach((item, idx) => {
     const priority = item.priority || "warning";
+    const receivedClass = item.received ? " received" : "";
     const processes = (item.담당공정 || []).join("/");
     const shortage = item.부족수량 || 0;
     const stock = item.현재재고 || 0;
     const unit = item.단위 || "";
-    html += `<div class="material-item ${priority}">
+    html += `<div class="material-item ${priority}${receivedClass}">
       <div class="material-item-header">
+        <input type="checkbox" class="material-received-check" data-idx="${idx}" data-date="${dashData.date}" ${item.received ? "checked" : ""} title="입고 확인">
         <span class="material-item-name" title="${escHtml(item.자재품번 || "")}">${escHtml(item.자재품명 || "")}</span>
         ${processes ? `<span class="material-item-process">${escHtml(processes)}</span>` : ""}
       </div>
@@ -272,6 +288,9 @@ function renderMaterial() {
     html += `<div class="material-footer">마지막 점검: ${material.checkedAt}</div>`;
   }
   listEl.innerHTML = html;
+
+  // 입고 확인 체크박스 바인딩
+  bindMaterialReceived();
 }
 
 function renderCommonNotices() {
@@ -284,12 +303,30 @@ function renderCommonNotices() {
   let html = '<div class="common-notice-list">';
   notices.forEach((entry, idx) => {
     html += `<div class="common-notice-item">
+      <span class="cn-move-wrap">
+        ${idx > 0 ? `<span class="cn-move" data-from="${idx}" data-to="${idx - 1}" title="위로">▲</span>` : '<span class="cn-move disabled">▲</span>'}
+        ${idx < notices.length - 1 ? `<span class="cn-move" data-from="${idx}" data-to="${idx + 1}" title="아래로">▼</span>` : '<span class="cn-move disabled">▼</span>'}
+      </span>
       <span class="cn-text">${escHtml(entry.text || "")}</span>
       <span class="cn-del" data-idx="${idx}" title="삭제">×</span>
     </div>`;
   });
   html += '</div>';
   el.innerHTML = html;
+
+  // 순서 변경 바인딩
+  el.querySelectorAll(".cn-move:not(.disabled)").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      try {
+        const res = await fetch("api/notices/common/reorder", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ from: parseInt(btn.dataset.from), to: parseInt(btn.dataset.to) }),
+        });
+        if (res.ok) { flashStatus("순서 변경됨"); await loadDashboard(currentDate); }
+      } catch { flashStatus("변경 실패"); }
+    });
+  });
 
   // 삭제 바인딩
   el.querySelectorAll(".cn-del").forEach(btn => {
@@ -345,41 +382,93 @@ function renderWeekCalendar() {
     html += `</div>`;
   }
 
-  // 하단 통합 입력
+  // 하단 통합 입력 (날짜 선택기로 미래 날짜도 등록 가능)
   html += `<div class="week-cal-add">
-    <select class="week-cal-select" id="cal-day-select">
-      ${weekDates.map(w => `<option value="${w.dateStr}">${w.dayLabel} ${w.dateLabel}</option>`).join("")}
-    </select>
+    <input type="date" class="week-cal-date-pick" id="cal-day-select" value="${today}">
     <input type="text" class="week-cal-input" id="cal-event-input" placeholder="일정 입력 후 Enter">
   </div>`;
+  html += `<div class="week-cal-preview" id="cal-preview"></div>`;
 
   el.innerHTML = html;
 
+  // 날짜 선택 시 미리보기
+  const calSelect = document.getElementById("cal-day-select");
+  const calPreview = document.getElementById("cal-preview");
+
+  async function loadCalPreview(dateStr) {
+    if (!dateStr) { calPreview.innerHTML = ""; return; }
+    // 현재 주 내 날짜면 이미 위에 표시되므로 미리보기 불필요
+    const isThisWeek = weekDates.some(w => w.dateStr === dateStr);
+    if (isThisWeek) { calPreview.innerHTML = ""; return; }
+    try {
+      const res = await fetch(`api/calendar/events/${dateStr}`);
+      if (!res.ok) { calPreview.innerHTML = ""; return; }
+      const data = await res.json();
+      const events = data.events || [];
+      if (events.length === 0) {
+        calPreview.innerHTML = `<div class="cal-preview-empty">${dateStr} — 등록된 일정 없음</div>`;
+      } else {
+        let ph = `<div class="cal-preview-title">${dateStr} 등록 일정 (${events.length}건)</div>`;
+        events.forEach((ev, idx) => {
+          ph += `<div class="cal-preview-item">
+            <span>${escHtml(ev)}</span>
+            <span class="cal-preview-del" data-date="${dateStr}" data-idx="${idx}">×</span>
+          </div>`;
+        });
+        calPreview.innerHTML = ph;
+        // 미리보기 삭제 바인딩
+        calPreview.querySelectorAll(".cal-preview-del").forEach(btn => {
+          btn.addEventListener("click", async () => {
+            try {
+              const r = await fetch(`api/calendar/event/${btn.dataset.date}/${btn.dataset.idx}`, { method: "DELETE" });
+              if (r.ok) { flashStatus("삭제됨"); loadCalPreview(dateStr); }
+            } catch { flashStatus("삭제 실패"); }
+          });
+        });
+      }
+    } catch { calPreview.innerHTML = ""; }
+  }
+
+  if (calSelect) {
+    calSelect.addEventListener("change", () => loadCalPreview(calSelect.value));
+  }
+
   // 입력 바인딩
   const calInput = document.getElementById("cal-event-input");
-  const calSelect = document.getElementById("cal-day-select");
   if (calInput) {
     calInput.addEventListener("keydown", async (e) => {
       if (e.key !== "Enter") return;
       e.preventDefault();
       const text = calInput.value.trim();
       if (!text) return;
+      const selectedDay = calSelect.value;
       calInput.disabled = true;
       try {
         const res = await fetch("api/calendar/event", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ date: calSelect.value, text }),
+          body: JSON.stringify({ date: selectedDay, text }),
         });
-        if (res.ok) { calInput.value = ""; flashStatus("저장됨"); await loadDashboard(currentDate); }
-        else { flashStatus("저장 실패"); }
-      } catch { flashStatus("네트워크 오류"); }
-      calInput.disabled = false;
-      calInput.focus();
+        if (res.ok) {
+          flashStatus("저장됨");
+          calInput.value = "";
+          calInput.disabled = false;
+          // 현재 주 날짜면 전체 새로고침, 미래 날짜면 미리보기만 갱신
+          const isThisWeek = weekDates.some(w => w.dateStr === selectedDay);
+          if (isThisWeek) {
+            await loadDashboard(currentDate);
+            const newInput = document.getElementById("cal-event-input");
+            if (newInput) newInput.focus();
+          } else {
+            loadCalPreview(selectedDay);
+            calInput.focus();
+          }
+        } else { flashStatus("저장 실패"); calInput.disabled = false; }
+      } catch { flashStatus("네트워크 오류"); calInput.disabled = false; }
     });
   }
 
-  // 삭제 바인딩
+  // 삭제 바인딩 (현재 주 이벤트)
   el.querySelectorAll(".cal-del").forEach(btn => {
     btn.addEventListener("click", async () => {
       try {
@@ -428,14 +517,7 @@ function renderBoard() {
     html += renderTeamHeader(team, idx, teamPlan);
     html += renderNotices(teamPlan);
     html += renderSwitches(teamPlan);
-    html += renderResumes(teamPlan);
-    if (team === "사출") {
-      html += renderResinChanges(teamPlan);
-    } else {
-      html += "</div>"; // close day-panel
-    }
-    html += renderManualNotes(team, notes[team] || []);
-    html += renderHandoverNotes(team, handover[team] || []);
+    html += renderCombinedNotes(team, notes[team] || [], handover[team] || []);
     html += `</div>`;
   });
   html += "</div>";
@@ -460,13 +542,43 @@ function renderTeamHeader(team, idx, teamPlan) {
   </div>`;
 }
 
+function isNoticePassed(text) {
+  // 텍스트에서 날짜 패턴 추출: (7/14), 7/18, 7월 15일 등
+  const patterns = [
+    /\((\d{1,2})\/(\d{1,2})\)/g,     // (7/14)
+    /(\d{1,2})\/(\d{1,2})/g,          // 7/14
+    /(\d{1,2})월\s*(\d{1,2})일/g,     // 7월 14일
+  ];
+  const today = dashData ? new Date(dashData.date + "T12:00:00+09:00") : new Date();
+  const year = today.getFullYear();
+  let found = false;
+  let allPassed = true;
+  for (const pat of patterns) {
+    let m;
+    while ((m = pat.exec(text)) !== null) {
+      found = true;
+      const d = new Date(year, parseInt(m[1]) - 1, parseInt(m[2]));
+      if (d >= today) allPassed = false;
+    }
+  }
+  return found && allPassed;
+}
+
 function renderNotices(teamPlan) {
   if (!teamPlan || !teamPlan.notices || teamPlan.notices.length === 0) {
     return '<ul class="notice-mini"><li class="empty">특이사항 없음</li></ul>';
   }
+  // 중복 제거 (같은 text)
+  const seen = new Set();
+  const unique = [];
+  for (const n of teamPlan.notices) {
+    const key = (n.text || "").trim();
+    if (!seen.has(key)) { seen.add(key); unique.push(n); }
+  }
   let html = '<ul class="notice-mini">';
-  teamPlan.notices.forEach(n => {
-    html += `<li><span class="ntag">${escHtml(n.tag)}</span>${escHtml(n.text)}</li>`;
+  unique.forEach(n => {
+    const passed = isNoticePassed(n.text || "");
+    html += `<li class="${passed ? 'notice-passed' : ''}"><span class="ntag">${escHtml(n.tag)}</span>${escHtml(n.text)}</li>`;
   });
   html += "</ul>";
   return html;
@@ -477,54 +589,73 @@ function renderSwitches(teamPlan) {
   if (!teamPlan || !teamPlan.switches || teamPlan.switches.length === 0) {
     html += '<div class="mini-empty">ITEM 변경 없음</div>';
   } else {
+    // 같은 라인끼리 그룹핑 (순서 유지)
+    const lineGroups = [];
+    const lineMap = {};
     teamPlan.switches.forEach(sw => {
-      const qty = sw.qty ? Number(sw.qty).toLocaleString() : "";
-      html += `<div class="mini-row switch">
-        <span class="mr-shift">${escHtml(sw.shift || "")}</span>
-        <span class="mr-line">${escHtml(String(sw.line || ""))}</span>
-        <span class="mr-flow"><span class="mr-from">${escHtml(sw.from || "")}</span>→<span class="mr-to">${escHtml(sw.to || "")}</span></span>
-        <span class="mr-qty">${qty}</span>
+      const key = String(sw.line || "");
+      if (!(key in lineMap)) {
+        lineMap[key] = lineGroups.length;
+        lineGroups.push({ line: key, equip: sw.equip || "", items: [] });
+      }
+      lineGroups[lineMap[key]].items.push(sw);
+    });
+
+    lineGroups.forEach(grp => {
+      const isRestart = grp.items.some(sw => sw.type === "restart");
+      const equipHtml = grp.equip && grp.equip !== grp.line ? `<span class="switch-equip">${escHtml(grp.equip)}</span>` : "";
+      const typeTag = isRestart ? `<span class="switch-restart-tag">재가동</span>` : "";
+
+      html += `<div class="switch-card${isRestart ? ' restart' : ''}">
+        <div class="switch-header">
+          <span class="switch-line">${escHtml(grp.line)}</span>
+          ${equipHtml}${typeTag}
+        </div>`;
+
+      grp.items.forEach(sw => {
+        const timing = sw.shift || "";
+        const midTag = sw.midCount ? `<span class="switch-mid-count">${sw.midCount}회</span>` : "";
+        let resinHtml = "";
+        if (sw.resin) {
+          const resinName = sw.resinGrade ? `${escHtml(sw.resinGrade)}` : escHtml(sw.resin);
+          const fromR = sw.fromResin ? `${sw.fromResinGrade ? escHtml(sw.fromResinGrade) : escHtml(sw.fromResin)}→` : "";
+          const cond = sw.temp ? ` (${escHtml(sw.temp)}/${escHtml(sw.time)})` : "";
+          resinHtml = `<span class="switch-resin-inline">🔸${fromR}${resinName}${cond}</span>`;
+        }
+        html += `<div class="switch-flow-row">
+          ${timing ? `<span class="switch-timing${timing.includes('중') ? ' mid-shift' : ''}">${timing}</span>` : ""}
+          ${midTag}
+          <span class="switch-from-name">${escHtml(sw.from || "")}</span>
+          <span class="switch-arrow">→</span>
+          <span class="switch-to-name">${escHtml(sw.to || "")}</span>
+          ${resinHtml}
+        </div>`;
+      });
+
+      html += `</div>`;
+    });
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderCombinedNotes(team, notesList, handoverList) {
+  let html = `<div class="combined-notes">
+    <div class="combined-notes-title">전달 / 인수인계</div>
+    <div class="combined-log">`;
+  // 전달사항
+  if (notesList.length > 0) {
+    notesList.forEach((entry, idx) => {
+      const doneClass = entry.done ? " done" : "";
+      html += `<div class="manual-log-item${doneClass}">
+        <input type="checkbox" class="mlog-check" data-team="${team}" data-idx="${idx}" ${entry.done ? "checked" : ""}>
+        <span class="mlog-time">${escHtml(entry.time || "")}</span>
+        <span class="mlog-text">${escHtml(entry.text || "")}</span>
+        <span class="mlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
       </div>`;
     });
   }
-  return html;
-}
-
-function renderResumes(teamPlan) {
-  let html = '<div class="day-section-title muted">재가동 현황</div>';
-  if (!teamPlan || !teamPlan.resumes || teamPlan.resumes.length === 0) {
-    html += '<div class="mini-empty">해당 없음</div>';
-  } else {
-    const chips = teamPlan.resumes.map(r => `<span class="chip">${escHtml(r)}</span>`).join(" ");
-    html += `<div class="resume-summary"><b>${teamPlan.resumes.length}개 라인</b> ${chips}</div>`;
-  }
-  return html;
-}
-
-function renderResinChanges(teamPlan) {
-  if (!teamPlan) return "</div>"; // close day-panel
-  if (!teamPlan.resinChanges || teamPlan.resinChanges.length === 0) {
-    return `<div class="resin-note empty">
-      <div class="resin-note-title">건조기 사전준비 (수지 변경 · BOM 기준)</div>
-      <div class="resin-empty-text">수지 변경 없음 — 기존 자재 유지</div>
-    </div></div>`;
-  }
-  let html = `<div class="resin-note"><div class="resin-note-title">건조기 사전준비 (수지 변경 · BOM 기준)</div>`;
-  teamPlan.resinChanges.forEach(rc => {
-    html += `<div class="resin-row">
-      <span class="rr-line">${escHtml(String(rc.line || ""))}</span>
-      <span class="rr-item">${escHtml(rc.item || "")}</span>
-      <span class="rr-resin">${escHtml(rc.resin || "")}</span>
-    </div>`;
-  });
-  html += "</div></div>"; // close resin-note + day-panel
-  return html;
-}
-
-function renderHandoverNotes(team, handoverList) {
-  let html = `<div class="handover-card">
-    <div class="handover-card-title">인수인계 사항</div>
-    <div class="handover-log" id="hlog-${team}">`;
+  // 인수인계
   if (handoverList.length > 0) {
     handoverList.forEach((entry, idx) => {
       const authorTag = entry.author ? `<span class="ho-author">${escHtml(entry.author)}</span>` : "";
@@ -539,39 +670,19 @@ function renderHandoverNotes(team, handoverList) {
         <span class="hlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
       </div>`;
     });
-  } else {
-    html += '<div class="ho-empty">등록된 인수인계 없음</div>';
   }
   html += `</div>
-    <div class="handover-input-row">
-      <input type="text" class="handover-author-input" data-team="${team}" placeholder="이름" id="ho-author-${team}">
-      <select class="handover-shift-select" data-team="${team}" id="ho-shift-${team}">
-        <option value="주간→야간">주간→야간</option>
-        <option value="야간→주간">야간→주간</option>
-      </select>
+    <div class="combined-inputs">
+      <input type="text" class="manual-note-input" data-team="${team}" placeholder="전달사항 입력 후 Enter...">
+      <div class="combined-ho-row">
+        <input type="text" class="handover-author-input" data-team="${team}" placeholder="이름" id="ho-author-${team}">
+        <select class="handover-shift-select" data-team="${team}" id="ho-shift-${team}">
+          <option value="주간→야간">주간→야간</option>
+          <option value="야간→주간">야간→주간</option>
+        </select>
+        <input type="text" class="handover-note-input" data-team="${team}" placeholder="인수인계 입력 후 Enter...">
+      </div>
     </div>
-    <input type="text" class="handover-note-input" data-team="${team}" placeholder="인수인계 내용 입력 후 Enter...">
-  </div>`;
-  return html;
-}
-
-function renderManualNotes(team, notesList) {
-  let html = `<div class="manual-note">
-    <div class="manual-log" id="log-${team}">`;
-  if (notesList.length > 0) {
-    notesList.forEach((entry, idx) => {
-      const doneClass = entry.done ? " done" : "";
-      html += `<div class="manual-log-item${doneClass}">
-        <input type="checkbox" class="mlog-check" data-team="${team}" data-idx="${idx}" ${entry.done ? "checked" : ""}>
-        <span class="mlog-time">${escHtml(entry.time || "")}</span>
-        <span class="mlog-text">${escHtml(entry.text || "")}</span>
-        <span class="mlog-del" data-team="${team}" data-idx="${idx}" title="삭제">×</span>
-      </div>`;
-    });
-  }
-  html += `</div>
-    <div class="manual-note-label">현장 전달사항 <span class="manual-hint">(Enter 입력)</span></div>
-    <input type="text" class="manual-note-input" data-team="${team}" placeholder="전달사항 입력 후 Enter...">
   </div>`;
   return html;
 }
@@ -647,19 +758,39 @@ function bindNoteChecks() {
 
 function bindHandoverAcks() {
   document.querySelectorAll(".ho-ack-btn").forEach(btn => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", () => {
+      // 이미 입력 폼이 열려있으면 무시
+      if (btn.parentElement.querySelector(".ho-ack-inline")) return;
       const team = btn.dataset.team;
       const idx = btn.dataset.idx;
-      const name = prompt("확인자 이름:");
-      if (!name) return;
-      try {
-        const res = await fetch(`api/handover/${currentDate}/${encodeURIComponent(team)}/${idx}/ack`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ackedBy: name }),
-        });
-        if (res.ok) { flashStatus("확인 완료"); await loadDashboard(currentDate); }
-      } catch { flashStatus("처리 실패"); }
+      // 인라인 입력 폼 생성
+      const wrap = document.createElement("span");
+      wrap.className = "ho-ack-inline";
+      wrap.innerHTML = `<input type="text" class="ho-ack-name-input" placeholder="이름" maxlength="10">
+        <button type="button" class="ho-ack-confirm">확인</button>
+        <button type="button" class="ho-ack-cancel">취소</button>`;
+      btn.style.display = "none";
+      btn.parentElement.appendChild(wrap);
+      const nameInput = wrap.querySelector(".ho-ack-name-input");
+      nameInput.focus();
+      async function doAck() {
+        const name = nameInput.value.trim();
+        if (!name) { nameInput.focus(); return; }
+        try {
+          const res = await fetch(`api/handover/${currentDate}/${encodeURIComponent(team)}/${idx}/ack`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ackedBy: name }),
+          });
+          if (res.ok) { flashStatus("확인 완료"); await loadDashboard(currentDate); }
+        } catch { flashStatus("처리 실패"); }
+      }
+      wrap.querySelector(".ho-ack-confirm").addEventListener("click", doAck);
+      nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") doAck(); });
+      wrap.querySelector(".ho-ack-cancel").addEventListener("click", () => {
+        wrap.remove();
+        btn.style.display = "";
+      });
     });
   });
 }
@@ -684,17 +815,23 @@ function bindHandoverInputs() {
           body: JSON.stringify({ date: currentDate, team, text, author, shift }),
         });
         if (res.ok) {
-          input.value = "";
           flashStatus("저장됨");
           await loadDashboard(currentDate);
+          // 새로 렌더된 DOM에서 해당 팀 입력란 찾아 focus + 값 복원
+          const newInput = document.querySelector(`.handover-note-input[data-team="${team}"]`);
+          if (newInput) newInput.focus();
+          const newAuthor = document.getElementById(`ho-author-${team}`);
+          if (newAuthor) newAuthor.value = author;
+          const newShift = document.getElementById(`ho-shift-${team}`);
+          if (newShift) newShift.value = shift;
         } else {
           flashStatus("저장 실패");
+          input.disabled = false;
         }
       } catch {
         flashStatus("네트워크 오류");
+        input.disabled = false;
       }
-      input.disabled = false;
-      input.focus();
     });
   });
 }
@@ -715,6 +852,23 @@ function bindHandoverDeletes() {
       } catch {
         flashStatus("삭제 실패");
       }
+    });
+  });
+}
+
+function bindMaterialReceived() {
+  document.querySelectorAll(".material-received-check").forEach(chk => {
+    chk.addEventListener("change", async () => {
+      const idx = chk.dataset.idx;
+      const date = chk.dataset.date;
+      try {
+        const res = await fetch(`api/material/${date}/received/${idx}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (res.ok) { flashStatus("입고 확인 처리됨"); await loadDashboard(currentDate); }
+      } catch { flashStatus("처리 실패"); }
     });
   });
 }
@@ -758,13 +912,16 @@ function setupSearch() {
   async function doSearch() {
     const keyword = input.value.trim();
     if (!keyword) return;
-    results.innerHTML = '<div class="search-loading">검색 중...</div>';
+    const searchDays = 30;
+    results.innerHTML = `<div class="search-loading">검색 중... (0/${searchDays}일)</div>`;
 
-    // 최근 14일간 데이터 검색
+    // 최근 30일간 데이터 검색
     const found = [];
     const today = todayKST();
     let d = today;
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < searchDays; i++) {
+      const prog = results.querySelector(".search-loading");
+      if (prog) prog.textContent = `검색 중... (${i + 1}/${searchDays}일)`;
       try {
         const res = await fetch(`api/dashboard/${d}`);
         if (res.ok) {
@@ -827,8 +984,9 @@ function init() {
   setupSearch();
   loadDashboard(currentDate);
   // 30초마다 자동 새로고침 (오늘 날짜일 때만)
+  // 단, 사용자가 인계사항/공지 등을 입력·선택 중이면 건너뜀 (입력값·포커스 유실 방지)
   refreshTimer = setInterval(() => {
-    if (currentDate === todayKST()) {
+    if (currentDate === todayKST() && !isUserTyping()) {
       loadDashboard(currentDate);
     }
   }, 30000);
