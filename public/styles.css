@@ -337,6 +337,29 @@ body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, "Segoe
   margin-top: 3px;
 }
 
+/* ITEM 변경 완료 체크 */
+.switch-check {
+  width: 15px; height: 15px; flex: none; cursor: pointer;
+  accent-color: var(--status-good); align-self: center; margin-right: 2px;
+}
+.switch-flow-row.done .switch-from-name,
+.switch-flow-row.done .switch-to-name,
+.switch-flow-row.done .switch-resin-inline,
+.switch-flow-row.done .switch-arrow,
+.switch-flow-row.done .switch-timing {
+  text-decoration: line-through; opacity: 0.5;
+}
+.switch-flow-row.done { opacity: 0.75; }
+.switch-done-at {
+  font-size: 9px; font-weight: 700; color: var(--status-good);
+  flex: none; margin-left: auto; white-space: nowrap;
+}
+.switch-card.all-done {
+  background: rgba(12, 163, 12, 0.06);
+  border-color: rgba(12, 163, 12, 0.3);
+  border-left-color: var(--status-good);
+}
+
 .day-panel { display:block; }
 
 .day-section-title { font-size:11.5px; font-weight:700; letter-spacing:.02em; color:var(--text-secondary); margin:0 0 6px; }
@@ -711,7 +734,7 @@ body { margin:0; min-height:100vh; font-family: system-ui, -apple-system, "Segoe
   }
   .ho-ack-btn { min-height: 36px; min-width: 52px; font-size: 12px; }
   .alert-ack { min-height: 32px; padding: 4px 10px; font-size: 12px; }
-  .mlog-check, .material-received-check { width: 20px; height: 20px; }
+  .mlog-check, .material-received-check, .switch-check { width: 20px; height: 20px; }
   .cn-move { font-size: 12px; padding: 4px 6px; }
   .manual-note-input, .handover-note-input, .common-note-input, .week-cal-input {
     font-size: 14px; padding: 10px 12px;

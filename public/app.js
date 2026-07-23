@@ -516,7 +516,7 @@ function renderBoard() {
     html += `<div class="team-col">`;
     html += renderTeamHeader(team, idx, teamPlan);
     html += renderNotices(teamPlan);
-    html += renderSwitches(teamPlan);
+    html += renderSwitches(team, teamPlan);
     html += renderCombinedNotes(team, notes[team] || [], handover[team] || []);
     html += `</div>`;
   });
@@ -530,6 +530,7 @@ function renderBoard() {
   bindHandoverInputs();
   bindHandoverDeletes();
   bindHandoverAcks();
+  bindSwitchChecks();
 }
 
 function renderTeamHeader(team, idx, teamPlan) {
@@ -584,7 +585,7 @@ function renderNotices(teamPlan) {
   return html;
 }
 
-function renderSwitches(teamPlan) {
+function renderSwitches(team, teamPlan) {
   let html = '<div class="day-panel"><div class="day-section-title">ITEM 변경</div>';
   if (!teamPlan || !teamPlan.switches || teamPlan.switches.length === 0) {
     html += '<div class="mini-empty">ITEM 변경 없음</div>';
@@ -603,10 +604,11 @@ function renderSwitches(teamPlan) {
 
     lineGroups.forEach(grp => {
       const isRestart = grp.items.some(sw => sw.type === "restart");
+      const allDone = grp.items.every(sw => sw.done);
       const equipHtml = grp.equip && grp.equip !== grp.line ? `<span class="switch-equip">${escHtml(grp.equip)}</span>` : "";
       const typeTag = isRestart ? `<span class="switch-restart-tag">재가동</span>` : "";
 
-      html += `<div class="switch-card${isRestart ? ' restart' : ''}">
+      html += `<div class="switch-card${isRestart ? ' restart' : ''}${allDone ? ' all-done' : ''}">
         <div class="switch-header">
           <span class="switch-line">${escHtml(grp.line)}</span>
           ${equipHtml}${typeTag}
@@ -622,13 +624,17 @@ function renderSwitches(teamPlan) {
           const cond = sw.temp ? ` (${escHtml(sw.temp)}/${escHtml(sw.time)})` : "";
           resinHtml = `<span class="switch-resin-inline">🔸${fromR}${resinName}${cond}</span>`;
         }
-        html += `<div class="switch-flow-row">
+        const sig = sw._sig || "";
+        const doneAtHtml = sw.done && sw.doneAt ? `<span class="switch-done-at">✓ ${escHtml(sw.doneAt)}</span>` : "";
+        html += `<div class="switch-flow-row${sw.done ? ' done' : ''}">
+          <input type="checkbox" class="switch-check" data-team="${escHtml(team)}" data-sig="${escHtml(sig)}" ${sw.done ? "checked" : ""} title="변경 완료 체크">
           ${timing ? `<span class="switch-timing${timing.includes('중') ? ' mid-shift' : ''}">${timing}</span>` : ""}
           ${midTag}
           <span class="switch-from-name">${escHtml(sw.from || "")}</span>
           <span class="switch-arrow">→</span>
           <span class="switch-to-name">${escHtml(sw.to || "")}</span>
           ${resinHtml}
+          ${doneAtHtml}
         </div>`;
       });
 
@@ -852,6 +858,27 @@ function bindHandoverDeletes() {
       } catch {
         flashStatus("삭제 실패");
       }
+    });
+  });
+}
+
+function bindSwitchChecks() {
+  document.querySelectorAll(".switch-check").forEach(chk => {
+    chk.addEventListener("change", async () => {
+      const team = chk.dataset.team;
+      const sig = chk.dataset.sig;
+      // plan의 실제 날짜(fallback 포함) 기준으로 저장
+      const planDate = (dashData && dashData.fallbackDate) ? dashData.fallbackDate : currentDate;
+      chk.disabled = true;
+      try {
+        const res = await fetch(`api/switch/${planDate}/${encodeURIComponent(team)}/done`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sig }),
+        });
+        if (res.ok) { flashStatus("완료 처리됨"); await loadDashboard(currentDate); }
+        else { flashStatus("처리 실패"); chk.disabled = false; }
+      } catch { flashStatus("처리 실패"); chk.disabled = false; }
     });
   });
 }

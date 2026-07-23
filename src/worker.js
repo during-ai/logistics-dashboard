@@ -14,6 +14,11 @@ function getPrevDateKST(dateStr) {
   return d.toISOString().slice(0, 10);
 }
 
+/* ── ITEM 변경(switch) 완료 시그니처 (동일 항목 식별용) ── */
+function switchSigBase(sw) {
+  return [sw.line || "", sw.from || "", sw.to || "", sw.shift || "", sw.resin || "", sw.type || ""].join("|");
+}
+
 function json(code, obj) {
   return new Response(JSON.stringify(obj), {
     status: code,
@@ -157,6 +162,34 @@ async function handleAPI(url, method, request, env) {
     }
     await env.LOGISTICS_KV.put(key, JSON.stringify(notes));
     return json(200, { ok: true, notes });
+  }
+
+  // ── POST /api/switch/:date/:team/done (ITEM 변경 완료 토글, sig 기준) ──
+  const switchDoneMatch = p.match(/^\/api\/switch\/(\d{4}-\d{2}-\d{2})\/([^/]+)\/done$/);
+  if (method === "POST" && switchDoneMatch) {
+    const [, sDate, team] = switchDoneMatch;
+    const decodedTeam = decodeURIComponent(team);
+    try {
+      const body = await request.json();
+      const sig = body.sig;
+      if (!sig) return json(400, { message: "sig 필수" });
+      const key = `switchdone:${sDate}`;
+      const raw = await env.LOGISTICS_KV.get(key);
+      const doneMap = raw ? JSON.parse(raw) : {};
+      if (!doneMap[decodedTeam]) doneMap[decodedTeam] = {};
+      if (doneMap[decodedTeam][sig] && doneMap[decodedTeam][sig].done) {
+        // 완료 해제
+        delete doneMap[decodedTeam][sig];
+      } else {
+        // 완료 처리
+        doneMap[decodedTeam][sig] = {
+          done: true,
+          doneAt: new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(11, 16),
+        };
+      }
+      await env.LOGISTICS_KV.put(key, JSON.stringify(doneMap));
+      return json(200, { ok: true, doneMap });
+    } catch { return json(400, { message: "Invalid request" }); }
   }
 
   // ── DELETE /api/notes/:key/:team/:idx ── (persistent 또는 날짜별)
@@ -720,6 +753,31 @@ async function serveDashboard(env, date) {
       plan.teams[team].notices = notices.filter(n =>
         !(prev1Texts.has(n.text) && prev2Texts.has(n.text))
       );
+    }
+  }
+
+  // switches(ITEM 변경) 완료 상태 병합 — plan의 실제 날짜(fallback 포함) 기준
+  if (plan && plan.teams) {
+    const planDate = fallbackDate || date;
+    const sdRaw = await env.LOGISTICS_KV.get(`switchdone:${planDate}`);
+    const doneMap = sdRaw ? JSON.parse(sdRaw) : {};
+    for (const team of Object.keys(plan.teams)) {
+      const switches = plan.teams[team]?.switches;
+      if (!switches || !switches.length) continue;
+      const teamDone = doneMap[team] || {};
+      const counter = {};
+      for (const sw of switches) {
+        const base = switchSigBase(sw);
+        counter[base] = (counter[base] || 0) + 1;
+        const sig = `${base}#${counter[base]}`; // 동일 시그니처 중복 대응(순번)
+        sw._sig = sig;
+        if (teamDone[sig] && teamDone[sig].done) {
+          sw.done = true;
+          sw.doneAt = teamDone[sig].doneAt || null;
+        } else {
+          sw.done = false;
+        }
+      }
     }
   }
 
