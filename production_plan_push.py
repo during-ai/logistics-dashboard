@@ -698,33 +698,41 @@ def parse_plan_sheet(wb, team, config, target_date, prev_date, next_date=None):
                         "qty": int(next_main[2]), "fromQty": int(today_day[2]),
                     })
 
-    # --- 재가동 감지 (전날 생산 없고 오늘 생산 있는 라인, 시프트 표시) ---
+    # --- 재가동 감지 (시프트 단위: 직전 시프트 미가동 후 다시 가동) ---
+    # 기준: 주간이든 야간이든 한 시프트라도 비가동이면 연속생산이 아니다.
+    #       미가동 직후 다시 도는 시프트를 '재가동'(콜드 스타트)으로 본다.
+    #   - 오늘 주간 재가동 = 오늘 주간 가동 + 직전 시프트(전날 야간) 미가동
+    #   - 오늘 야간 재가동 = 오늘 야간 가동 + 직전 시프트(오늘 주간) 미가동
     resumes = []
     resume_details = []  # 수지 사전 준비 감지용 (후공정 제외)
+
+    def _add_resume(line, shift_label, main_item):
+        equip_val = line_equip_map.get(line, "")
+        display = equip_val if use_equip_as_line and equip_val else line
+        display_fmt = _format_line(display)
+        resumes.append(f"{display_fmt}({shift_label})")
+        if not _is_post_process(line) and main_item:
+            resume_details.append({
+                "line": display_fmt,
+                "shift": shift_label,
+                "equip": equip_val if not use_equip_as_line else "",
+                "code": main_item[0],
+                "product": main_item[1],
+            })
+
     for line in line_products_today:
-        if line not in line_products_prev:
-            today_prods = line_products_today[line]
-            today_day = _shift_main(today_prods, 'day')
-            today_night = _shift_main(today_prods, 'night')
+        today_prods = line_products_today[line]
+        prev_prods = line_products_prev.get(line)
+        today_day = _shift_main(today_prods, 'day')       # 오늘 주간 메인품목 or None
+        today_night = _shift_main(today_prods, 'night')   # 오늘 야간
+        prev_night = _shift_main(prev_prods, 'night') if prev_prods else None  # 전날 야간
 
-            equip_val = line_equip_map.get(line, "")
-            display = equip_val if use_equip_as_line and equip_val else line
-            display_fmt = _format_line(display)
-
-            # 주간부터 가동이면 주간, 야간만이면 야간
-            shift = "주간" if today_day else "야간"
-            resumes.append(f"{display_fmt}({shift})")
-
-            # 후공정 제외하고 수지 사전 준비용 상세 정보
-            if not _is_post_process(line):
-                main_prod = today_day or today_night
-                resume_details.append({
-                    "line": display_fmt,
-                    "shift": shift,
-                    "equip": equip_val if not use_equip_as_line else "",
-                    "code": main_prod[0],
-                    "product": main_prod[1],
-                })
+        # (1) 오늘 주간 재가동: 직전 시프트(전날 야간)가 비었는데 오늘 주간 가동
+        if today_day and not prev_night:
+            _add_resume(line, "주간", today_day)
+        # (2) 오늘 야간 재가동: 직전 시프트(오늘 주간)가 비었는데 오늘 야간 가동
+        if today_night and not today_day:
+            _add_resume(line, "야간", today_night)
 
     # 명일 주간 재가동 (금일 전체 미가동 → 명일 주간 가동)
     for line in line_products_next:
