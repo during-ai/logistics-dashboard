@@ -90,6 +90,7 @@ async function handleAPI(url, method, request, env) {
         linesDay += (data.lines?.day || 0);
         linesNight += (data.lines?.night || 0);
         switchCount += (data.switches?.length || 0);
+        resumeCount += (data.resumes?.length || 0);
       }
       existing.date = date;
       existing.kpi = { linesDay, linesNight, switchCount, resumeCount };

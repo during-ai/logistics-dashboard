@@ -28,8 +28,20 @@ PLAN_SEARCH_DIRS = [
 ]
 
 TEAMS = ["권선", "사출", "전장"]
-RESIN_SPEC_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                               "..", "BOM_Project", "resin_spec.xlsx")
+
+
+def _find_bom_dir():
+    """BOM 프로젝트 폴더 탐색 (폴더 리네임 대응: 01_BOM_Project / BOM_Project)."""
+    parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for name in ("01_BOM_Project", "BOM_Project"):
+        d = os.path.join(parent, name)
+        if os.path.isdir(d):
+            return d
+    return os.path.join(parent, "01_BOM_Project")
+
+
+BOM_DIR = _find_bom_dir()
+RESIN_SPEC_PATH = os.path.join(BOM_DIR, "resin_spec.xlsx")
 
 # 팀별 엑셀 구조 설정
 TEAM_CONFIG = {
@@ -127,16 +139,14 @@ def load_resin_spec():
         return {}
 
     # 2. BOM 로드 → 제품 품번→수지 원자재 매핑
-    bom_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "..", "BOM_Project", "BOM_DATA.xlsx")
+    bom_path = os.path.join(BOM_DIR, "BOM_DATA.xlsx")
     if not os.path.isfile(bom_path):
         print(f"  [WARN] BOM 파일 없음: {bom_path}")
         return {}
 
     try:
         import pandas as pd
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        "..", "BOM_Project"))
+        sys.path.insert(0, BOM_DIR)
         from bom import normalize_bom
         bom_raw = pd.read_excel(bom_path)
         bom_df = normalize_bom(bom_raw)
@@ -214,30 +224,34 @@ def detect_resin_changes(switches, resin_spec):
     return changes
 
 
-def detect_resin_for_restarts(resume_details, resin_spec):
-    """재가동 라인의 수지 사전 준비 정보 생성 (후공정 라인 제외됨)"""
-    if not resin_spec or not resume_details:
-        return []
-    preps = []
-    for rd in resume_details:
-        code = rd.get("code", "")
-        info = resin_spec.get(code)
+def build_restart_cards(resume_details, resin_spec=None):
+    """재가동 라인을 ITEM변경 카드(type=restart)로 변환.
+
+    수지 매칭 여부와 무관하게 모든 재가동 상세를 카드로 만든다.
+    resin_spec이 주어지고 품번이 매칭되면 수지 사전준비 정보를 부가한다(사출 전용).
+    """
+    cards = []
+    for rd in resume_details or []:
+        card = {
+            "line": rd["line"],
+            "equip": rd.get("equip", ""),
+            "shift": rd.get("shift", ""),
+            "from": "(재가동)",
+            "to": rd["product"],
+            "type": "restart",
+        }
+        info = (resin_spec or {}).get(rd.get("code", ""))
         if info:
-            preps.append({
-                "line": rd["line"],
-                "equip": rd.get("equip", ""),
-                "shift": rd.get("shift", ""),
-                "from": "(재가동)",
-                "to": rd["product"],
+            card.update({
                 "resin": info["resin"],
                 "resinGrade": info.get("grade", ""),
                 "fromResin": "",
-                "fromGrade": "",
+                "fromResinGrade": "",
                 "temp": info["temp"],
                 "time": info["time"],
-                "type": "restart",
             })
-    return preps
+        cards.append(card)
+    return cards
 
 
 def find_latest_folder(base_dir):
@@ -835,13 +849,14 @@ def main():
     # --force 플래그: 수정시간 무시하고 전체 push
     force_mode = "--force" in sys.argv
 
-    # 날짜 결정: 인자로 날짜 지정 가능, 없으면 내일
+    # 날짜 결정: 인자로 날짜(YYYY-MM-DD) 지정 시 그대로, 없으면 당일(KST)
     if len(sys.argv) > 1 and len(sys.argv[1]) == 10:
         target_date = sys.argv[1]
     else:
-        # 08시 기준 날짜 (KST): 08시 이전이면 전날이 기준일
+        # 07시 기준 날짜 (KST): 07시 이전(심야)이면 전날, 07시부터는 당일
+        # → 아침 07:30 푸시가 '당일' 생산계획으로 매핑되도록 컷오프를 07시로 둠
         now_kst = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=9)
-        if now_kst.hour < 8:
+        if now_kst.hour < 7:
             target_date = (now_kst - datetime.timedelta(days=1)).strftime("%Y-%m-%d")
         else:
             target_date = now_kst.strftime("%Y-%m-%d")
@@ -929,14 +944,16 @@ def main():
         result = parse_team(folder, team, target_date, prev_date, next_date)
         if result:
             switches = result.get("switches", [])
-            # 수지 정보는 사출만 적용 (권선/전장은 수지 건조 불필요)
-            if team == "사출" and resin_spec:
-                resin_changes = detect_resin_changes(switches, resin_spec)
-                resin_restarts = detect_resin_for_restarts(
+            # 수지 정보는 사출만 적용 (권선/전장은 수지 건조 불필요).
+            # 단, 재가동 카드는 수지 매칭과 무관하게 전 팀 생성한다.
+            if team == "사출":
+                resin_changes = detect_resin_changes(switches, resin_spec) if resin_spec else []
+                resin_restarts = build_restart_cards(
                     result.get("resumeDetails", []), resin_spec)
             else:
                 resin_changes = []
-                resin_restarts = []
+                resin_restarts = build_restart_cards(
+                    result.get("resumeDetails", []), None)
 
             # 수지 정보를 switches에 병합 (ITEM변경 + 건조기 사전준비 통합)
             resin_by_key = {}
@@ -962,22 +979,15 @@ def main():
                     "fromResin": rc.get('fromResin', ''), "fromResinGrade": rc.get('fromGrade', ''),
                     "temp": rc['temp'], "time": rc['time'],
                 })
-            # 재가동 수지준비 → switch 엔트리로 추가
+            # 재가동 카드 → switch 엔트리로 추가 (수지 정보는 있으면 부가됨)
             for rc in resin_restarts:
-                switches.append({
-                    "line": rc['line'], "equip": rc.get('equip', ''),
-                    "shift": rc.get('shift', ''),
-                    "from": rc.get('from', ''), "to": rc.get('to', ''),
-                    "resin": rc['resin'], "resinGrade": rc.get('resinGrade', ''),
-                    "fromResin": '', "fromResinGrade": '',
-                    "temp": rc['temp'], "time": rc['time'],
-                    "type": "restart",
-                })
+                switches.append(rc)
 
             teams_data[team] = {
                 "lines": result["lines"],
                 "notices": result.get("notices", []),
                 "switches": switches,
+                "resumes": result.get("resumes", []),
             }
             total_day += result["lines"]["day"]
             total_night += result["lines"]["night"]
