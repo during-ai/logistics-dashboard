@@ -84,6 +84,54 @@
   .parsed-summary .team-row { display:flex; gap:12px; align-items:center; margin:3px 0; }
   .parsed-summary .team-name { font-weight:600; min-width:80px; }
   .parsed-summary .vacancy { color:var(--status-critical); font-size:11px; }
+
+  /* ── 기록 보관함 (일별 저장) ── */
+  .admin-root:has(#tab-history.active) { max-width:1120px; }
+  .hist-layout { display:grid; grid-template-columns:220px 1fr; gap:14px; align-items:start; }
+  .hist-datelist { background:var(--page-plane); border:1px solid var(--border); border-radius:8px; padding:8px 6px; max-height:640px; overflow:auto; }
+  .hist-dl-title { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--text-muted); padding:4px 8px 8px; }
+  .hist-dl-item { display:block; width:100%; text-align:left; border:1px solid transparent; background:transparent; border-radius:7px; padding:7px 9px; margin-bottom:3px; cursor:pointer; font-family:inherit; }
+  .hist-dl-item:hover { background:var(--surface-1); }
+  .hist-dl-item.sel { background:var(--surface-1); border-color:var(--series-blue); box-shadow:inset 3px 0 0 var(--series-blue); }
+  .hist-dl-date { display:flex; align-items:baseline; gap:6px; }
+  .hist-dl-date b { font-size:13px; font-variant-numeric:tabular-nums; }
+  .hist-dl-date .dow { font-size:11px; color:var(--text-muted); }
+  .hist-dl-date .today { margin-left:auto; font-size:9px; font-weight:700; color:#fff; background:var(--series-blue); border-radius:4px; padding:1px 5px; }
+  .hist-dl-counts { display:flex; gap:10px; margin-top:3px; font-size:10.5px; color:var(--text-muted); font-variant-numeric:tabular-nums; }
+  .hist-dl-counts .sw b { color:var(--status-serious); } .hist-dl-counts .ho b { color:var(--series-blue); }
+
+  .hist-dayview { min-height:200px; }
+  .hist-dv-head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  .hist-dv-head h3 { font-size:16px; margin:0; }
+  .hist-dv-head .ro { font-size:10px; font-weight:700; color:var(--text-muted); border:1px solid var(--border); border-radius:5px; padding:2px 7px; }
+  .hist-dv-head .savedat { font-size:11px; color:var(--text-muted); margin-left:auto; font-family:monospace; }
+  .hist-empty { font-size:13px; color:var(--text-muted); padding:40px 10px; text-align:center; }
+
+  /* 보고서(표) 형식 */
+  .hist-report { display:flex; flex-direction:column; gap:20px; }
+  .hist-rsec-title { font-size:12.5px; font-weight:800; margin:0 0 7px; display:flex; align-items:baseline; gap:8px; border-left:3px solid var(--series-blue); padding-left:7px; }
+  .hist-rsec-title .cnt { font-size:11px; font-weight:600; color:var(--text-muted); }
+  .hist-tbl-wrap { overflow-x:auto; }
+  .hist-table { width:100%; border-collapse:collapse; font-size:11.5px; }
+  .hist-table th { text-align:left; font-weight:700; color:var(--text-muted); font-size:10px; letter-spacing:.3px; border-bottom:1.5px solid var(--gridline); padding:5px 9px; white-space:nowrap; }
+  .hist-table td { border-bottom:1px solid var(--gridline); padding:6px 9px; vertical-align:top; }
+  .hist-table tbody tr:last-child td { border-bottom:none; }
+  .hist-table .c-team { font-weight:700; white-space:nowrap; }
+  .hist-table .c-line { white-space:nowrap; font-weight:600; }
+  .hist-table .c-when { white-space:nowrap; color:var(--text-secondary); }
+  .hist-table tr.r-restart td { background:rgba(230,140,40,.08); }
+  .hist-team-dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:5px; vertical-align:middle; }
+  .hist-restart-tag { font-size:9px; font-weight:700; color:#8a4b12; border:1px solid #8a4b12; border-radius:4px; padding:0 4px; margin-left:5px; }
+  .hist-arrow { color:var(--text-muted); }
+  .hist-resin { color:#8a4b12; font-size:10.5px; }
+  .hist-done { color:var(--status-good); font-weight:700; font-family:monospace; white-space:nowrap; }
+  .hist-undone { color:var(--text-muted); }
+  .hist-shift { color:#fff; background:#4a3aa7; border-radius:4px; padding:0 5px; font-size:9.5px; font-weight:600; }
+  .hist-time { font-family:monospace; color:var(--text-muted); }
+  .hist-mid { color:var(--status-serious); font-weight:600; }
+  .hist-ack { color:var(--status-good); font-weight:700; white-space:nowrap; }
+  .hist-noack { color:var(--status-warning); font-weight:700; }
+  .hist-mini-empty { font-size:11.5px; color:var(--text-muted); padding:4px 2px; }
 </style>
 </head>
 <body>
@@ -106,6 +154,7 @@
     <button class="tab-btn" data-tab="bom">BOM</button>
     <button class="tab-btn" data-tab="chat">톡방 요약</button>
     <button class="tab-btn" data-tab="report">주간보고</button>
+    <button class="tab-btn" data-tab="history">기록 보관함</button>
   </div>
 
   <!-- ── 생산계획 ── -->
@@ -164,10 +213,19 @@
         한번 등록하면 다시 업로드할 때까지 유지됩니다.
       </p>
       <div class="mode-toggle">
-        <button class="mode-btn active" data-mode="file" data-target="staff">파일 업로드</button>
+        <button class="mode-btn active" data-mode="edit" data-target="staff">직접 편집</button>
+        <button class="mode-btn" data-mode="file" data-target="staff">파일 업로드</button>
         <button class="mode-btn" data-mode="json" data-target="staff">JSON 직접입력</button>
       </div>
-      <div id="staff-file-mode">
+      <div id="staff-edit-mode">
+        <p style="font-size:11px;color:var(--text-muted);margin:0 0 10px;">
+          현재 저장된 인원을 불러왔습니다. 현원/정원을 고치고 저장하세요. 결원은 자동 계산됩니다.
+        </p>
+        <div id="staff-edit-rows"></div>
+        <button class="btn btn-secondary" id="btn-staff-add-team" style="font-size:11px;margin-bottom:10px;">+ 팀 추가</button>
+        <button class="btn btn-primary" id="btn-staff-edit-save">저장</button>
+      </div>
+      <div id="staff-file-mode" style="display:none;">
         <div class="drop-zone" id="staff-drop">
           <input type="file" id="staff-file" accept=".xlsx,.xls,.csv">
           <div class="icon">📄</div>
@@ -257,6 +315,22 @@
     </div>
   </div>
 
+  <!-- ── 기록 보관함 ── -->
+  <div class="tab-content" id="tab-history">
+    <div class="section">
+      <h2>일별 기록 보관함 — ITEM 변경 · 인수인계 확정본</h2>
+      <div class="hist-layout">
+        <div class="hist-datelist" id="hist-datelist">
+          <div class="hist-dl-title">저장된 날짜</div>
+          <div class="hist-empty" style="padding:20px 8px;">불러오는 중…</div>
+        </div>
+        <div class="hist-dayview" id="hist-dayview">
+          <div class="hist-empty">왼쪽에서 날짜를 선택하면 그날의 확정 기록을 읽기전용으로 봅니다.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -293,18 +367,168 @@
       document.querySelectorAll(".tab-content").forEach(c => c.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
+      if (btn.dataset.tab === "history") loadHistoryList();
     });
   });
 
-  /* ── 모드 전환 (파일 ↔ JSON) ── */
+  /* ════════════════════════════════════════════
+     기록 보관함 — 일별 저장 확정본 조회 (읽기전용)
+     ════════════════════════════════════════════ */
+  const HIST_TEAMS = ["사출", "전장", "권선"];
+  const HIST_DOT = { "사출": "#1a65c0", "전장": "#007000", "권선": "#4a3aa7" };
+  const HIST_DOW = ["일", "월", "화", "수", "목", "금", "토"];
+  let historyLoaded = false;
+  let histSelected = null;
+
+  function histDow(dateStr) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    return HIST_DOW[new Date(y, m - 1, d).getDay()];
+  }
+
+  async function loadHistoryList() {
+    const box = document.getElementById("hist-datelist");
+    try {
+      const res = await fetch("api/history");
+      const data = await res.json();
+      const items = data.items || [];
+      historyLoaded = true;
+      if (!items.length) {
+        box.innerHTML = '<div class="hist-dl-title">저장된 날짜</div><div class="hist-empty" style="padding:20px 8px;">저장된 기록이 아직 없습니다.</div>';
+        return;
+      }
+      const todayStr = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+      let html = '<div class="hist-dl-title">저장된 날짜</div>';
+      items.forEach(it => {
+        const md = it.date.slice(5).replace("-", "/");
+        const todayTag = it.date === todayStr ? '<span class="today">오늘</span>' : "";
+        html += `<button class="hist-dl-item" data-date="${it.date}">
+          <div class="hist-dl-date"><b>${md}</b><span class="dow">${histDow(it.date)}</span>${todayTag}</div>
+          <div class="hist-dl-counts"><span class="sw">변경 <b>${it.sw || 0}</b></span><span class="ho">인계 <b>${it.ho || 0}</b></span></div>
+        </button>`;
+      });
+      box.innerHTML = html;
+      box.querySelectorAll(".hist-dl-item").forEach(el => {
+        el.addEventListener("click", () => {
+          box.querySelectorAll(".hist-dl-item").forEach(x => x.classList.remove("sel"));
+          el.classList.add("sel");
+          loadHistoryDay(el.dataset.date);
+        });
+      });
+      // 첫 항목 자동 선택
+      const first = box.querySelector(".hist-dl-item");
+      if (first) { first.classList.add("sel"); loadHistoryDay(first.dataset.date); }
+    } catch {
+      box.innerHTML = '<div class="hist-dl-title">저장된 날짜</div><div class="hist-empty" style="padding:20px 8px;color:var(--status-critical);">불러오기 실패</div>';
+    }
+  }
+
+  async function loadHistoryDay(date) {
+    histSelected = date;
+    const view = document.getElementById("hist-dayview");
+    view.innerHTML = '<div class="hist-empty">불러오는 중…</div>';
+    try {
+      const res = await fetch(`api/history/${date}`);
+      if (!res.ok) { view.innerHTML = '<div class="hist-empty">해당 날짜 기록 없음</div>'; return; }
+      const data = await res.json();
+      renderHistoryDay(data);
+    } catch {
+      view.innerHTML = '<div class="hist-empty" style="color:var(--status-critical);">불러오기 실패</div>';
+    }
+  }
+
+  function histSectionWrap(title, count, body) {
+    return `<div class="hist-rsec"><div class="hist-rsec-title">${esc(title)} <span class="cnt">${count}건</span></div>${body}</div>`;
+  }
+
+  // ITEM 변경 — 팀 전체를 한 표로 (보고서 형식)
+  function renderSwitchReport(data) {
+    const plan = data.plan;
+    const rows = [];
+    HIST_TEAMS.forEach(team => {
+      const tp = plan && plan.teams ? plan.teams[team] : null;
+      (tp && tp.switches ? tp.switches : []).forEach(sw => rows.push({ team, sw }));
+    });
+    if (!rows.length) return histSectionWrap("ITEM 변경", 0, '<div class="hist-mini-empty">변경 없음</div>');
+    let tr = "";
+    rows.forEach(({ team, sw }) => {
+      const restart = sw.type === "restart";
+      const restartTag = restart ? '<span class="hist-restart-tag">재가동</span>' : "";
+      const equip = sw.equip && sw.equip !== sw.line ? ` <span style="color:var(--text-muted);font-size:10px;">${esc(sw.equip)}</span>` : "";
+      let resin = "";
+      if (sw.resin) {
+        const rn = sw.resinGrade ? esc(sw.resinGrade) : esc(sw.resin);
+        const fr = sw.fromResin ? `${sw.fromResinGrade ? esc(sw.fromResinGrade) : esc(sw.fromResin)}→` : "";
+        const cond = sw.temp ? ` (${esc(sw.temp)}/${esc(sw.time || "")})` : "";
+        resin = ` <span class="hist-resin">🔸${fr}${rn}${cond}</span>`;
+      }
+      const mid = sw.midCount ? ` <span class="hist-mid">${esc(String(sw.midCount))}회</span>` : "";
+      const done = sw.done ? `<span class="hist-done">✓ ${esc(sw.doneAt || "")}</span>` : '<span class="hist-undone">–</span>';
+      tr += `<tr class="${restart ? "r-restart" : ""}">
+        <td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[team]}"></span>${esc(team)}</td>
+        <td class="c-line">${esc(sw.line || "")}${equip}${restartTag}</td>
+        <td>${esc(sw.from || "")} <span class="hist-arrow">→</span> ${esc(sw.to || "")}${resin}</td>
+        <td class="c-when">${esc(sw.shift || "")}${mid}</td>
+        <td>${done}</td>
+      </tr>`;
+    });
+    const body = `<div class="hist-tbl-wrap"><table class="hist-table">
+      <thead><tr><th>팀</th><th>라인</th><th>변경</th><th>시점</th><th>완료</th></tr></thead>
+      <tbody>${tr}</tbody></table></div>`;
+    return histSectionWrap("ITEM 변경", rows.length, body);
+  }
+
+  // 인수인계 — 팀 전체를 한 표로 (보고서 형식)
+  function renderHandoverReport(data) {
+    const ho = data.handover || {};
+    const rows = [];
+    HIST_TEAMS.forEach(team => { (ho[team] || []).forEach(h => rows.push({ team, h })); });
+    if (!rows.length) return histSectionWrap("인수인계", 0, '<div class="hist-mini-empty">인수인계 없음</div>');
+    let tr = "";
+    rows.forEach(({ team, h }) => {
+      const shift = h.shift ? `<span class="hist-shift">${esc(h.shift)}</span> ` : "";
+      const ack = h.acked
+        ? `<span class="hist-ack">✓ ${esc(h.ackedBy || "확인")} ${esc(h.ackedAt || "")}</span>`
+        : '<span class="hist-noack">미확인</span>';
+      tr += `<tr>
+        <td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[team]}"></span>${esc(team)}</td>
+        <td class="c-when">${shift}<span class="hist-time">${esc(h.time || "")}</span></td>
+        <td>${esc(h.author || "")}</td>
+        <td>${esc(h.text || "")}</td>
+        <td>${ack}</td>
+      </tr>`;
+    });
+    const body = `<div class="hist-tbl-wrap"><table class="hist-table">
+      <thead><tr><th>팀</th><th>교대·시각</th><th>작성자</th><th>내용</th><th>확인</th></tr></thead>
+      <tbody>${tr}</tbody></table></div>`;
+    return histSectionWrap("인수인계", rows.length, body);
+  }
+
+  function renderHistoryDay(data) {
+    const view = document.getElementById("hist-dayview");
+    const savedAt = data.savedAt ? String(data.savedAt).replace("T", " ").slice(5, 16) : "";
+    let html = `<div class="hist-dv-head">
+      <h3>${esc(data.date)} (${histDow(data.date)}) 일일 기록</h3>
+      <span class="ro">읽기전용 · 확정본</span>
+      ${savedAt ? `<span class="savedat">저장 ${esc(savedAt)}</span>` : ""}
+    </div><div class="hist-report">
+      ${renderSwitchReport(data)}
+      ${renderHandoverReport(data)}
+    </div>`;
+    view.innerHTML = html;
+  }
+
+  /* ── 모드 전환 (직접편집 ↔ 파일 ↔ JSON) ── */
   document.querySelectorAll(".mode-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const target = btn.dataset.target;
       const mode = btn.dataset.mode;
       btn.parentElement.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
       btn.classList.add("active");
-      document.getElementById(`${target}-file-mode`).style.display = mode === "file" ? "" : "none";
-      document.getElementById(`${target}-json-mode`).style.display = mode === "json" ? "" : "none";
+      ["edit", "file", "json"].forEach(m => {
+        const el = document.getElementById(`${target}-${m}-mode`);
+        if (el) el.style.display = mode === m ? "" : "none";
+      });
+      if (target === "staff" && mode === "edit") loadStaffEdit();
     });
   });
 
@@ -512,6 +736,89 @@
       showResult("staff-result", false, "네트워크 오류");
     }
   });
+
+  /* ── 인원현황 직접 편집 ── */
+  function makeStaffRow(name = "", current = "", total = "") {
+    const vacancy = (Number(total) || 0) - (Number(current) || 0);
+    const row = document.createElement("div");
+    row.className = "staff-edit-row";
+    row.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;";
+    row.innerHTML = `
+      <input type="text" class="se-name" placeholder="팀명" value="${esc(name)}"
+        style="flex:1;min-width:110px;padding:6px 8px;">
+      <label style="font-size:11px;color:var(--text-muted);">현원</label>
+      <input type="number" class="se-current" min="0" value="${esc(String(current))}"
+        style="width:64px;padding:6px 8px;text-align:center;">
+      <label style="font-size:11px;color:var(--text-muted);">정원</label>
+      <input type="number" class="se-total" min="0" value="${esc(String(total))}"
+        style="width:64px;padding:6px 8px;text-align:center;">
+      <span class="se-vacancy" style="font-size:11px;min-width:44px;color:${vacancy > 0 ? 'var(--status-critical)' : 'var(--text-muted)'};">
+        ${vacancy > 0 ? '결원' + vacancy : '충원'}</span>
+      <span class="se-del" title="삭제" style="cursor:pointer;color:var(--text-muted);font-size:16px;padding:0 4px;">×</span>`;
+    const cur = row.querySelector(".se-current");
+    const tot = row.querySelector(".se-total");
+    const vac = row.querySelector(".se-vacancy");
+    const recalc = () => {
+      const v = (Number(tot.value) || 0) - (Number(cur.value) || 0);
+      vac.textContent = v > 0 ? "결원" + v : "충원";
+      vac.style.color = v > 0 ? "var(--status-critical)" : "var(--text-muted)";
+    };
+    cur.addEventListener("input", recalc);
+    tot.addEventListener("input", recalc);
+    row.querySelector(".se-del").addEventListener("click", () => row.remove());
+    return row;
+  }
+
+  async function loadStaffEdit() {
+    const box = document.getElementById("staff-edit-rows");
+    box.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">불러오는 중...</div>';
+    let teams = {};
+    try {
+      const res = await fetch("api/dashboard/today");
+      const data = await res.json();
+      teams = (data.staff && data.staff.teams) || {};
+    } catch { /* 네트워크 오류 시 빈 폼 */ }
+    box.innerHTML = "";
+    const names = Object.keys(teams);
+    if (names.length === 0) {
+      box.appendChild(makeStaffRow());
+    } else {
+      names.forEach(n => box.appendChild(makeStaffRow(n, teams[n].current ?? "", teams[n].total ?? "")));
+    }
+  }
+
+  document.getElementById("btn-staff-add-team").addEventListener("click", () => {
+    document.getElementById("staff-edit-rows").appendChild(makeStaffRow());
+  });
+
+  document.getElementById("btn-staff-edit-save").addEventListener("click", async () => {
+    if (!pin) { showResult("staff-result", false, "PIN을 먼저 확인하세요"); return; }
+    const teams = {};
+    let bad = false;
+    document.querySelectorAll("#staff-edit-rows .staff-edit-row").forEach(row => {
+      const name = row.querySelector(".se-name").value.trim();
+      if (!name) return;  // 팀명 없는 행은 건너뜀
+      const current = Number(row.querySelector(".se-current").value);
+      const total = Number(row.querySelector(".se-total").value);
+      if (Number.isNaN(current) || Number.isNaN(total)) { bad = true; return; }
+      teams[name] = { current, total };
+    });
+    if (bad) { showResult("staff-result", false, "현원/정원은 숫자여야 합니다"); return; }
+    if (Object.keys(teams).length === 0) { showResult("staff-result", false, "최소 1개 팀을 입력하세요"); return; }
+    try {
+      const res = await fetch("api/upload/staff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin, data: { teams } }),
+      });
+      showResult("staff-result", res.ok, res.ok ? `저장 완료 (${Object.keys(teams).length}개 팀)` : "실패");
+    } catch {
+      showResult("staff-result", false, "네트워크 오류");
+    }
+  });
+
+  // 초기 로드 (직접 편집이 기본 모드)
+  loadStaffEdit();
 
   /* ── 인원현황 저장 (JSON) ── */
   document.getElementById("btn-staff-save").addEventListener("click", async () => {

@@ -19,6 +19,36 @@ function switchSigBase(sw) {
   return [sw.line || "", sw.from || "", sw.to || "", sw.shift || "", sw.resin || "", sw.type || ""].join("|");
 }
 
+/* ── 날짜 가감 (YYYY-MM-DD) ── */
+function addDaysKST(dateStr, delta) {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + delta);
+  return d.toISOString().slice(0, 10);
+}
+
+/* ── plan.switches에 완료상태(done/doneAt/_sig) 주입 (serveDashboard와 동일 규칙) ── */
+function mergeSwitchDone(plan, doneMap) {
+  if (!plan || !plan.teams) return;
+  for (const team of Object.keys(plan.teams)) {
+    const switches = plan.teams[team]?.switches;
+    if (!switches || !switches.length) continue;
+    const teamDone = doneMap[team] || {};
+    const counter = {};
+    for (const sw of switches) {
+      const base = switchSigBase(sw);
+      counter[base] = (counter[base] || 0) + 1;
+      const sig = `${base}#${counter[base]}`;
+      sw._sig = sig;
+      if (teamDone[sig] && teamDone[sig].done) {
+        sw.done = true;
+        sw.doneAt = teamDone[sig].doneAt || null;
+      } else {
+        sw.done = false;
+      }
+    }
+  }
+}
+
 function json(code, obj) {
   return new Response(JSON.stringify(obj), {
     status: code,
@@ -189,6 +219,7 @@ async function handleAPI(url, method, request, env) {
         };
       }
       await env.LOGISTICS_KV.put(key, JSON.stringify(doneMap));
+      await snapshotHistory(env, sDate);
       return json(200, { ok: true, doneMap });
     } catch { return json(400, { message: "Invalid request" }); }
   }
@@ -485,6 +516,7 @@ async function handleAPI(url, method, request, env) {
       handover[team].unshift({ time, text, author: body.author || "", shift: body.shift || "" });
 
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      await snapshotHistory(env, date);
       return json(201, { ok: true, handover });
     } catch { return json(400, { message: "Invalid request" }); }
   }
@@ -506,6 +538,7 @@ async function handleAPI(url, method, request, env) {
         handover[decodedTeam][idx].ackedAt = new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString().slice(11, 16);
       }
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      await snapshotHistory(env, hDate);
       return json(200, { ok: true, handover });
     } catch { return json(400, { message: "Invalid request" }); }
   }
@@ -522,6 +555,7 @@ async function handleAPI(url, method, request, env) {
     if (handover[decodedTeam] && idx >= 0 && idx < handover[decodedTeam].length) {
       handover[decodedTeam].splice(idx, 1);
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      await snapshotHistory(env, hDate);
     }
     return json(200, { ok: true, handover });
   }
@@ -558,6 +592,7 @@ async function handleAPI(url, method, request, env) {
       }
 
       await env.LOGISTICS_KV.put(key, JSON.stringify(handover));
+      await snapshotHistory(env, date);
       return json(200, { ok: true, date });
     } catch { return json(400, { message: "Invalid JSON" }); }
   }
@@ -631,11 +666,15 @@ async function handleAPI(url, method, request, env) {
     return json(200, { reports });
   }
 
-  // ── GET /api/history ──
+  // ── GET /api/history (날짜 목록 + 변경/인계 카운트) ──
   if (method === "GET" && p === "/api/history") {
-    const list = await env.LOGISTICS_KV.list({ prefix: "history:" });
-    const dates = list.keys.map(k => k.name.replace("history:", "")).sort().reverse();
-    return json(200, { dates });
+    const idxRaw = await env.LOGISTICS_KV.get("history:index");
+    const index = idxRaw ? JSON.parse(idxRaw) : {};
+    const items = Object.keys(index)
+      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      .sort().reverse()
+      .map(d => ({ date: d, sw: index[d].sw || 0, ho: index[d].ho || 0, savedAt: index[d].savedAt || null }));
+    return json(200, { items, dates: items.map(i => i.date) });
   }
 
   // ── GET /api/history/:date ──
@@ -804,33 +843,91 @@ async function serveDashboard(env, date) {
   });
 }
 
-/* ── 히스토리 스냅샷 ── */
+/* ── 히스토리 스냅샷 (일별 기록 보관함) ──
+   plan·인수인계(handover)·ITEM 변경 완료상태를 하루 단위로 확정 보관.
+   handover는 cron 삭제 대상이므로 여기서 스냅샷해 두어야 유실되지 않음. */
 async function snapshotHistory(env, date) {
-  const [planRaw, notesRaw, staffRaw, bomRaw, chatRaw, commRaw] = await Promise.all([
+  const [planRaw, notesRaw, staffRaw, bomRaw, chatRaw, commRaw, handoverRaw, switchDoneRaw, commonRaw] = await Promise.all([
     env.LOGISTICS_KV.get(`plan:${date}`),
     env.LOGISTICS_KV.get("notes:persistent"),
     env.LOGISTICS_KV.get("staff:latest"),
     env.LOGISTICS_KV.get("bom:latest"),
     env.LOGISTICS_KV.get(`chat:${date}`),
     env.LOGISTICS_KV.get(`comm:${date}`),
+    env.LOGISTICS_KV.get(`handover:${date}`),
+    env.LOGISTICS_KV.get(`switchdone:${date}`),
+    env.LOGISTICS_KV.get("notices:common"),
   ]);
+
+  // plan.switches에 완료상태 주입 (읽기전용 렌더용 self-contained 스냅샷)
+  const plan = planRaw ? JSON.parse(planRaw) : null;
+  const doneMap = switchDoneRaw ? JSON.parse(switchDoneRaw) : {};
+  mergeSwitchDone(plan, doneMap);
+
+  const handover = handoverRaw ? JSON.parse(handoverRaw) : { "권선": [], "사출": [], "전장": [] };
+
+  // 목록 배지용 카운트 집계
+  let switchCount = 0, handoverCount = 0;
+  if (plan && plan.teams) {
+    for (const t of Object.values(plan.teams)) switchCount += (t.switches?.length || 0);
+  }
+  for (const arr of Object.values(handover)) handoverCount += (arr?.length || 0);
+
+  // 저장할 내용이 없는 날(빈 주말/휴일 등)은 보관함에 남기지 않음
+  const hasContent = !!plan || handoverCount > 0 || !!commRaw || !!chatRaw;
+  if (!hasContent) return;
+
+  const savedAt = new Date(Date.now() + 9 * 3600000).toISOString();
   const snapshot = {
     date,
-    plan: planRaw ? JSON.parse(planRaw) : null,
+    plan,
+    handover,
     notes: notesRaw ? JSON.parse(notesRaw) : null,
     staff: staffRaw ? JSON.parse(staffRaw) : null,
     bom: bomRaw ? JSON.parse(bomRaw) : null,
     chat: chatRaw ? JSON.parse(chatRaw) : null,
     comm: commRaw ? JSON.parse(commRaw) : null,
-    savedAt: new Date().toISOString(),
+    commonNotices: commonRaw ? JSON.parse(commonRaw) : [],
+    counts: { switchCount, handoverCount },
+    savedAt,
   };
   await env.LOGISTICS_KV.put(`history:${date}`, JSON.stringify(snapshot));
+
+  // 날짜 목록 인덱스 갱신 (목록 조회 시 KV 다중 read 방지)
+  const idxRaw = await env.LOGISTICS_KV.get("history:index");
+  const index = idxRaw ? JSON.parse(idxRaw) : {};
+  index[date] = { sw: switchCount, ho: handoverCount, savedAt };
+  await env.LOGISTICS_KV.put("history:index", JSON.stringify(index));
+}
+
+/* ── 90일 초과 보관본 자동 정리 ── */
+async function pruneHistory(env, days) {
+  const idxRaw = await env.LOGISTICS_KV.get("history:index");
+  if (!idxRaw) return;
+  const index = JSON.parse(idxRaw);
+  const cutoff = addDaysKST(getTodayKST(), -days);
+  let changed = false;
+  for (const d of Object.keys(index)) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && d < cutoff) {
+      await env.LOGISTICS_KV.delete(`history:${d}`);
+      delete index[d];
+      changed = true;
+    }
+  }
+  if (changed) {
+    await env.LOGISTICS_KV.put("history:index", JSON.stringify(index));
+    console.log(`[cron] ${days}일 초과 보관본 정리 완료`);
+  }
 }
 
 /* ── 스케줄러: 매일 09시(KST) 인수인계 리셋 ── */
 async function handleScheduled(env) {
   const today = getTodayKST();
   const yesterday = getPrevDateKST(today);
+
+  // 전일 확정본을 먼저 보관함에 스냅샷 (아래 인수인계 삭제로 유실되기 전에 보존)
+  await snapshotHistory(env, yesterday);
+
   // 전일 인수인계 중 미확인 항목은 유지, 전부 확인이면 삭제
   const raw = await env.LOGISTICS_KV.get(`handover:${yesterday}`);
   if (raw) {
@@ -864,6 +961,9 @@ async function handleScheduled(env) {
       console.log(`[cron] 완료된 전달사항 정리됨`);
     }
   }
+
+  // 90일 초과 보관본 자동 정리
+  await pruneHistory(env, 90);
 }
 
 /* ── 메인 핸들러 ── */
