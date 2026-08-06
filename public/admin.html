@@ -283,11 +283,24 @@
   <!-- ── 주간보고 ── -->
   <div class="tab-content" id="tab-report">
     <div class="section">
-      <h2>주간업무보고 다운로드</h2>
+      <h2>주간 누적 보고 — 기록 보관함 기반 자동 집계</h2>
       <p style="font-size:11px;color:var(--text-muted);margin:0 0 12px;">
-        매주 월요일 08시 자동 생성됩니다. 현황판 데이터(전달사항, 경고, 인수인계) 기반으로 양식이 채워집니다.
+        일별 기록 보관함(인수인계·ITEM 변경)을 그 주 월~금으로 합산합니다. 매일 자동 누적되며, 아래에서 즉시 갱신·미리보기·Excel 다운로드가 됩니다.
       </p>
-      <div id="report-list" style="margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        <select id="wreport-week" style="font:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--page-plane);color:var(--text-primary);min-width:230px;"></select>
+        <button class="btn btn-secondary" id="btn-wreport-gen" style="font-size:11px;">이번주 지금 갱신</button>
+        <a id="wreport-xls" class="btn btn-primary" style="font-size:11px;padding:6px 14px;text-decoration:none;display:none;">Excel 다운로드</a>
+        <span id="wreport-status" style="font-size:11px;"></span>
+      </div>
+      <div id="wreport-view">
+        <div style="font-size:12px;color:var(--text-muted);">주를 선택하세요.</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2 style="font-size:12px;">이전 보고서 (구버전 xlsx)</h2>
+      <div id="report-list" style="margin-bottom:8px;">
         <div style="font-size:12px;color:var(--text-muted);">로딩 중...</div>
       </div>
       <button class="btn btn-secondary" id="btn-report-refresh" style="font-size:11px;">새로고침</button>
@@ -368,6 +381,7 @@
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
       if (btn.dataset.tab === "history") loadHistoryList();
+      if (btn.dataset.tab === "report") loadWreportList();
     });
   });
 
@@ -1033,6 +1047,112 @@
   }
   loadReportList();
   document.getElementById("btn-report-refresh").addEventListener("click", loadReportList);
+
+  /* ── 주간 누적 보고 (history 합산) ── */
+  function wMondayOf(dateStr) {
+    const d = new Date(dateStr + "T12:00:00Z"); const dow = d.getUTCDay();
+    d.setUTCDate(d.getUTCDate() - ((dow === 0 ? 7 : dow) - 1));
+    return d.toISOString().slice(0, 10);
+  }
+  function wRangeLabel(ws, we) {
+    return `${ws.slice(5).replace("-", "/")} ~ ${(we || "").slice(5).replace("-", "/")}`;
+  }
+
+  async function loadWreportList() {
+    const sel = document.getElementById("wreport-week");
+    let items = [];
+    try { const r = await fetch("api/wreport/list"); items = (await r.json()).items || []; } catch {}
+    const curMon = wMondayOf(new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10));
+    let opts = "";
+    if (!items.some(it => it.weekStart === curMon)) {
+      opts += `<option value="${curMon}">${wRangeLabel(curMon, "")} 이번주 (미생성)</option>`;
+    }
+    items.forEach(it => {
+      opts += `<option value="${it.weekStart}">${wRangeLabel(it.weekStart, it.weekEnd)} · 변경 ${it.sw} · 인계 ${it.ho}</option>`;
+    });
+    sel.innerHTML = opts;
+    sel.onchange = () => loadWreport(sel.value);
+    if (sel.value) loadWreport(sel.value);
+  }
+
+  async function loadWreport(weekStart) {
+    const view = document.getElementById("wreport-view");
+    const dl = document.getElementById("wreport-xls");
+    dl.style.display = "none";
+    view.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">불러오는 중…</div>';
+    try {
+      const r = await fetch(`api/wreport/${weekStart}`);
+      if (!r.ok) {
+        view.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">아직 생성되지 않았습니다. \'이번주 지금 갱신\'을 눌러 만드세요. (PIN 필요)</div>';
+        return;
+      }
+      const data = await r.json();
+      renderWreport(data);
+      dl.href = `api/wreport/${weekStart}/xls`;
+      dl.style.display = "";
+    } catch { view.innerHTML = '<div style="font-size:12px;color:var(--status-critical);">불러오기 실패</div>'; }
+  }
+
+  function renderWreport(data) {
+    const view = document.getElementById("wreport-view");
+    const c = data.counts || {};
+    const mmdd = d => d ? d.slice(5).replace("-", "/") : "";
+    const gen = data.generatedAt ? String(data.generatedAt).replace("T", " ").slice(5, 16) : "";
+    let swBody;
+    if (!data.switches || !data.switches.length) swBody = '<div class="hist-mini-empty">변경 없음</div>';
+    else {
+      let tr = "";
+      data.switches.forEach(s => {
+        const restart = s.type === "restart";
+        const rtag = restart ? '<span class="hist-restart-tag">재가동</span>' : "";
+        let resin = "";
+        if (s.resin) {
+          const rn = s.resinGrade ? esc(s.resinGrade) : esc(s.resin);
+          const fr = s.fromResin ? `${s.fromResinGrade ? esc(s.fromResinGrade) : esc(s.fromResin)}→` : "";
+          const cond = s.temp ? ` (${esc(s.temp)}/${esc(s.time || "")})` : "";
+          resin = ` <span class="hist-resin">🔸${fr}${rn}${cond}</span>`;
+        }
+        const done = s.done ? `<span class="hist-done">✓ ${esc(s.doneAt || "")}</span>` : '<span class="hist-undone">–</span>';
+        tr += `<tr class="${restart ? "r-restart" : ""}"><td class="c-when">${esc(mmdd(s.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[s.team] || "#888"}"></span>${esc(s.team)}</td><td class="c-line">${esc(s.line || "")}${rtag}</td><td>${esc(s.from || "")} <span class="hist-arrow">→</span> ${esc(s.to || "")}${resin}</td><td class="c-when">${esc(s.shift || "")}</td><td>${done}</td></tr>`;
+      });
+      swBody = `<div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>일자</th><th>팀</th><th>라인</th><th>변경</th><th>시점</th><th>완료</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+    }
+    let hoBody;
+    if (!data.handovers || !data.handovers.length) hoBody = '<div class="hist-mini-empty">인수인계 없음</div>';
+    else {
+      let tr = "";
+      data.handovers.forEach(h => {
+        const shift = h.shift ? `<span class="hist-shift">${esc(h.shift)}</span> ` : "";
+        const ack = h.acked ? `<span class="hist-ack">✓ ${esc(h.ackedBy || "확인")} ${esc(h.ackedAt || "")}</span>` : '<span class="hist-noack">미확인</span>';
+        tr += `<tr><td class="c-when">${esc(mmdd(h.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[h.team] || "#888"}"></span>${esc(h.team)}</td><td class="c-when">${shift}<span class="hist-time">${esc(h.time || "")}</span></td><td>${esc(h.author || "")}</td><td>${esc(h.text || "")}</td><td>${ack}</td></tr>`;
+      });
+      hoBody = `<div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>일자</th><th>팀</th><th>교대·시각</th><th>작성자</th><th>내용</th><th>확인</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+    }
+    view.innerHTML = `<div class="hist-dv-head">
+      <h3 style="font-size:15px;margin:0;">${esc(data.weekStart)} ~ ${esc(data.weekEnd)} 주간 누적</h3>
+      <span style="font-size:11px;color:var(--text-muted);">변경 ${c.switchCount || 0}건 · 인계 ${c.handoverCount || 0}건</span>
+      ${gen ? `<span class="savedat" style="margin-left:auto;">갱신 ${esc(gen)}</span>` : ""}
+    </div>
+    <div class="hist-report">
+      <div class="hist-rsec"><div class="hist-rsec-title">ITEM 변경 <span class="cnt">${(data.switches || []).length}건</span></div>${swBody}</div>
+      <div class="hist-rsec"><div class="hist-rsec-title">인수인계 <span class="cnt">${(data.handovers || []).length}건</span></div>${hoBody}</div>
+    </div>`;
+  }
+
+  document.getElementById("btn-wreport-gen").addEventListener("click", async () => {
+    const st = document.getElementById("wreport-status");
+    if (!pin) { st.textContent = "상단에서 PIN 인증 필요"; st.style.color = "var(--status-critical)"; return; }
+    st.textContent = "갱신 중…"; st.style.color = "var(--text-muted)";
+    try {
+      const r = await fetch("api/wreport/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin }) });
+      const j = await r.json();
+      if (r.ok) {
+        st.textContent = `갱신됨 (변경 ${j.counts.switchCount} · 인계 ${j.counts.handoverCount})`; st.style.color = "var(--status-good)";
+        await loadWreportList();
+      } else { st.textContent = j.message || "실패"; st.style.color = "var(--status-critical)"; }
+    } catch { st.textContent = "실패"; st.style.color = "var(--status-critical)"; }
+    setTimeout(() => { st.textContent = ""; }, 6000);
+  });
 
   /* ── 톡방 요약 ── */
   document.getElementById("btn-chat-save").addEventListener("click", async () => {

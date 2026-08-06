@@ -685,6 +685,54 @@ async function handleAPI(url, method, request, env) {
     return json(200, JSON.parse(raw));
   }
 
+  // ── GET /api/wreport/list (주간 누적 보고 목록) ──
+  if (method === "GET" && p === "/api/wreport/list") {
+    const idxRaw = await env.LOGISTICS_KV.get("wreport:index");
+    const index = idxRaw ? JSON.parse(idxRaw) : {};
+    const items = Object.keys(index)
+      .filter(w => /^\d{4}-\d{2}-\d{2}$/.test(w))
+      .sort().reverse()
+      .map(w => ({ weekStart: w, weekEnd: index[w].weekEnd, sw: index[w].sw || 0, ho: index[w].ho || 0, generatedAt: index[w].generatedAt || null }));
+    return json(200, { items });
+  }
+
+  // ── POST /api/wreport/generate (PIN — 수동 생성/갱신) ──
+  if (method === "POST" && p === "/api/wreport/generate") {
+    try {
+      const body = await request.json();
+      if (String(body.pin) !== env.MANAGER_PIN) return json(401, { message: "PIN 오류" });
+      const weekStart = getWeekKey(body.date || getTodayKST());
+      const report = await buildWeeklyReport(env, weekStart);
+      return json(200, { ok: true, weekStart, weekEnd: report.weekEnd, counts: report.counts });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
+  // ── GET /api/wreport/:weekStart/xls (Excel용 HTML 다운로드) ──
+  const wrXlsMatch = p.match(/^\/api\/wreport\/(\d{4}-\d{2}-\d{2})\/xls$/);
+  if (method === "GET" && wrXlsMatch) {
+    const raw = await env.LOGISTICS_KV.get(`wreport:${wrXlsMatch[1]}`);
+    if (!raw) return json(404, { message: "해당 주 보고 없음" });
+    const rep = JSON.parse(raw);
+    const fname = `물류_주간업무보고_${rep.weekStart}_${rep.weekEnd}.xls`;
+    return new Response("﻿" + weeklyReportToHtml(rep), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(fname)}`,
+        "Cache-Control": "no-store",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
+  // ── GET /api/wreport/:weekStart (주간 누적 보고 JSON) ──
+  const wrMatch = p.match(/^\/api\/wreport\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === "GET" && wrMatch) {
+    const raw = await env.LOGISTICS_KV.get(`wreport:${wrMatch[1]}`);
+    if (!raw) return json(404, { message: "해당 주 보고 없음" });
+    return json(200, JSON.parse(raw));
+  }
+
   return json(404, { message: "Not found" });
 }
 
@@ -900,6 +948,82 @@ async function snapshotHistory(env, date) {
   await env.LOGISTICS_KV.put("history:index", JSON.stringify(index));
 }
 
+/* ── 주간 누적 보고 (일별 history 월~금 합산) ── */
+async function buildWeeklyReport(env, weekStart) {
+  const weekEnd = addDaysKST(weekStart, 4); // 금요일
+  const teams = ["사출", "전장", "권선"];
+  const switches = [];   // {date, team, ...sw}
+  const handovers = [];  // {date, team, ...h}
+  const days = [];
+  for (let i = 0; i < 5; i++) {
+    const d = addDaysKST(weekStart, i);
+    const raw = await env.LOGISTICS_KV.get(`history:${d}`);
+    if (!raw) { days.push({ date: d, has: false }); continue; }
+    const snap = JSON.parse(raw);
+    days.push({ date: d, has: true });
+    const plan = snap.plan;
+    if (plan && plan.teams) {
+      for (const team of teams) {
+        const tp = plan.teams[team];
+        (tp && tp.switches ? tp.switches : []).forEach(sw => switches.push({ date: d, team, ...sw }));
+      }
+    }
+    const ho = snap.handover || {};
+    for (const team of teams) {
+      (ho[team] || []).forEach(h => handovers.push({ date: d, team, ...h }));
+    }
+  }
+  const report = {
+    weekStart, weekEnd, days, switches, handovers,
+    counts: { switchCount: switches.length, handoverCount: handovers.length },
+    generatedAt: new Date(Date.now() + 9 * 3600000).toISOString(),
+  };
+  await env.LOGISTICS_KV.put(`wreport:${weekStart}`, JSON.stringify(report));
+  const idxRaw = await env.LOGISTICS_KV.get("wreport:index");
+  const index = idxRaw ? JSON.parse(idxRaw) : {};
+  index[weekStart] = { weekEnd, sw: switches.length, ho: handovers.length, generatedAt: report.generatedAt };
+  await env.LOGISTICS_KV.put("wreport:index", JSON.stringify(index));
+  return report;
+}
+
+/* ── 주간 누적 보고 → Excel이 여는 HTML(.xls) ── */
+function weeklyReportToHtml(rep) {
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  const mmdd = (d) => d ? d.slice(5).replace("-", "/") : "";
+  const swRows = rep.switches.map(s => {
+    const restart = s.type === "restart" ? " [재가동]" : "";
+    let resin = "";
+    if (s.resin) {
+      const rn = s.resinGrade || s.resin;
+      const fr = s.fromResin ? `${s.fromResinGrade || s.fromResin}→` : "";
+      const cond = s.temp ? ` (${s.temp}/${s.time || ""})` : "";
+      resin = ` ${fr}${rn}${cond}`;
+    }
+    const done = s.done ? `완료 ${s.doneAt || ""}` : "";
+    return `<tr><td>${esc(mmdd(s.date))}</td><td>${esc(s.team)}</td><td>${esc((s.line || "") + restart)}</td><td>${esc(s.from || "")} → ${esc(s.to || "")}${esc(resin)}</td><td>${esc(s.shift || "")}</td><td>${esc(done)}</td></tr>`;
+  }).join("");
+  const hoRows = rep.handovers.map(h => {
+    const ack = h.acked ? `확인 ${h.ackedBy || ""} ${h.ackedAt || ""}` : "미확인";
+    return `<tr><td>${esc(mmdd(h.date))}</td><td>${esc(h.team)}</td><td>${esc(h.shift || "")} ${esc(h.time || "")}</td><td>${esc(h.author || "")}</td><td>${esc(h.text || "")}</td><td>${esc(ack)}</td></tr>`;
+  }).join("");
+  const th = 'style="background:#e8eef7;font-weight:bold;border:1px solid #999;padding:4px 8px;"';
+  const td = 'border:1px solid #ccc;padding:4px 8px;';
+  return `<html><head><meta charset="utf-8"></head><body style="font-family:'맑은 고딕',sans-serif;">
+<h2>물류 파트 주간업무보고 (${esc(rep.weekStart)} ~ ${esc(rep.weekEnd)})</h2>
+<p>ITEM 변경 ${rep.counts.switchCount}건 · 인수인계 ${rep.counts.handoverCount}건 · 생성 ${esc(String(rep.generatedAt).replace("T", " ").slice(0, 16))}</p>
+<h3>ITEM 변경</h3>
+<table style="border-collapse:collapse;font-size:12px;">
+<tr><th ${th}>일자</th><th ${th}>팀</th><th ${th}>라인</th><th ${th}>변경</th><th ${th}>시점</th><th ${th}>완료</th></tr>
+${swRows || `<tr><td style="${td}" colspan="6">변경 없음</td></tr>`}
+</table>
+<h3 style="margin-top:16px;">인수인계</h3>
+<table style="border-collapse:collapse;font-size:12px;">
+<tr><th ${th}>일자</th><th ${th}>팀</th><th ${th}>교대·시각</th><th ${th}>작성자</th><th ${th}>내용</th><th ${th}>확인</th></tr>
+${hoRows || `<tr><td style="${td}" colspan="6">인수인계 없음</td></tr>`}
+</table>
+</body></html>`;
+}
+
 /* ── 90일 초과 보관본 자동 정리 ── */
 async function pruneHistory(env, days) {
   const idxRaw = await env.LOGISTICS_KV.get("history:index");
@@ -964,6 +1088,13 @@ async function handleScheduled(env) {
 
   // 90일 초과 보관본 자동 정리
   await pruneHistory(env, 90);
+
+  // 주간 누적 보고 갱신: 이번 주는 매일 누적, 주가 바뀌면 지난주 확정본도 생성
+  await buildWeeklyReport(env, getWeekKey(today));
+  const yWeek = getWeekKey(yesterday);
+  if (yWeek !== getWeekKey(today)) {
+    await buildWeeklyReport(env, yWeek);
+  }
 }
 
 /* ── 메인 핸들러 ── */
