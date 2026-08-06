@@ -707,14 +707,35 @@ async function handleAPI(url, method, request, env) {
     } catch { return json(400, { message: "Invalid request" }); }
   }
 
+  // ── GET /api/wreport/manual/:weekStart (수기 입력 데이터 조회) ──
+  const wrManGetMatch = p.match(/^\/api\/wreport\/manual\/(\d{4}-\d{2}-\d{2})$/);
+  if (method === "GET" && wrManGetMatch) {
+    const raw = await env.LOGISTICS_KV.get(`wreportmanual:${wrManGetMatch[1]}`);
+    return json(200, raw ? JSON.parse(raw) : {});
+  }
+
+  // ── POST /api/wreport/manual (PIN — 수기 입력 저장) ──
+  if (method === "POST" && p === "/api/wreport/manual") {
+    try {
+      const body = await request.json();
+      if (String(body.pin) !== env.MANAGER_PIN) return json(401, { message: "PIN 오류" });
+      const weekStart = getWeekKey(body.weekStart || getTodayKST());
+      const manual = body.manual || {};
+      await env.LOGISTICS_KV.put(`wreportmanual:${weekStart}`, JSON.stringify(manual));
+      return json(200, { ok: true, weekStart });
+    } catch { return json(400, { message: "Invalid request" }); }
+  }
+
   // ── GET /api/wreport/:weekStart/xls (Excel용 HTML 다운로드) ──
   const wrXlsMatch = p.match(/^\/api\/wreport\/(\d{4}-\d{2}-\d{2})\/xls$/);
   if (method === "GET" && wrXlsMatch) {
     const raw = await env.LOGISTICS_KV.get(`wreport:${wrXlsMatch[1]}`);
     if (!raw) return json(404, { message: "해당 주 보고 없음" });
     const rep = JSON.parse(raw);
+    const manRaw = await env.LOGISTICS_KV.get(`wreportmanual:${wrXlsMatch[1]}`);
+    const manual = manRaw ? JSON.parse(manRaw) : {};
     const fname = `물류_주간업무보고_${rep.weekStart}_${rep.weekEnd}.xls`;
-    return new Response("﻿" + weeklyReportToHtml(rep), {
+    return new Response("﻿" + weeklyReportToHtml(rep, manual), {
       status: 200,
       headers: {
         "Content-Type": "application/vnd.ms-excel; charset=utf-8",
@@ -986,10 +1007,12 @@ async function buildWeeklyReport(env, weekStart) {
   return report;
 }
 
-/* ── 주간 누적 보고 → Excel이 여는 HTML(.xls) — 회사 양식(물류 주간업무 보고) 기반, 빈 섹션 생략 ── */
-function weeklyReportToHtml(rep) {
+/* ── 주간 누적 보고 → Excel이 여는 HTML(.xls) — 회사 양식(물류 주간업무 보고) 기반, 빈 섹션 생략 ──
+   rep = 자동 집계(ITEM변경·인수인계), manual = 수기 입력(핵심요약·KPI·업무개선·이슈리스크) ── */
+function weeklyReportToHtml(rep, manual) {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const mmdd = (d) => d ? d.slice(5).replace("-", "/") : "";
+  const m = manual || {};
   const sw = rep.switches || [];
   const ho = rep.handovers || [];
   const swDone = sw.filter(s => s.done).length;
@@ -1001,20 +1024,43 @@ function weeklyReportToHtml(rep) {
   const td = 'style="border:1px solid #bbbbbb;padding:3px 7px;"';
   const tdc = 'style="border:1px solid #bbbbbb;padding:3px 7px;text-align:center;"';
   const band = 'style="background:#2b4b7e;color:#ffffff;font-weight:bold;padding:5px 9px;font-size:13px;margin:14px 0 4px;"';
+  const rowHas = (r, keys) => keys.some(k => String(r[k] || "").trim() !== "");
+  const tbl = (headers, rows) => `<table style="border-collapse:collapse;font-size:12px;">
+<tr>${headers.map(h => `<th ${th}>${esc(h)}</th>`).join("")}</tr>
+${rows}
+</table>`;
 
   let sections = "";
 
-  // 주간 요약 지표
-  if (sw.length || ho.length) {
-    sections += `<div ${band}>■ 주간 요약 지표</div>
-<table style="border-collapse:collapse;font-size:12px;">
-<tr><th ${th}>항목</th><th ${th}>실적</th><th ${th}>세부</th></tr>
-<tr><td ${td}>ITEM 변경</td><td ${tdc}>${sw.length}건</td><td ${td}>완료 ${swDone} / 미완료 ${sw.length - swDone}${restart ? ` · 재가동 ${restart}` : ""}</td></tr>
-<tr><td ${td}>인수인계</td><td ${tdc}>${ho.length}건</td><td ${td}>확인 ${hoAck} / 미확인 ${ho.length - hoAck}</td></tr>
-</table>`;
+  // ① 주간 핵심 요약 (수기)
+  const summary = (m.summary || []).map(s => String(s || "").trim()).filter(Boolean);
+  if (summary.length) {
+    const rows = summary.map((s, i) => `<tr><td ${tdc}>Top ${i + 1}</td><td ${td}>${esc(s)}</td></tr>`).join("");
+    sections += `<div ${band}>■ 주간 핵심 요약</div>${tbl(["구분", "전주 대비 주요 실적 / 이슈 요약"], rows)}`;
   }
 
-  // 주간 ITEM 변경 현황
+  // ② 주간 KPI (수기)
+  const kpi = (m.kpi || []).filter(r => rowHas(r, ["target", "actual", "cumulative", "note"]));
+  if (kpi.length) {
+    const rows = kpi.map(r => `<tr><td ${td}>${esc(r.name || "")}</td><td ${tdc}>${esc(r.target || "")}</td><td ${tdc}>${esc(r.actual || "")}</td><td ${td}>${esc(r.cumulative || "")}</td><td ${td}>${esc(r.note || "")}</td></tr>`).join("");
+    sections += `<div ${band}>■ 주간 KPI</div>${tbl(["KPI", "목표", "실적", "누적", "비고"], rows)}`;
+  }
+
+  // ③ 주간 요약 지표 (자동)
+  if (sw.length || ho.length) {
+    const rows = `<tr><td ${td}>ITEM 변경</td><td ${tdc}>${sw.length}건</td><td ${td}>완료 ${swDone} / 미완료 ${sw.length - swDone}${restart ? ` · 재가동 ${restart}` : ""}</td></tr>
+<tr><td ${td}>인수인계</td><td ${tdc}>${ho.length}건</td><td ${td}>확인 ${hoAck} / 미확인 ${ho.length - hoAck}</td></tr>`;
+    sections += `<div ${band}>■ 주간 요약 지표 (현황판 자동)</div>${tbl(["항목", "실적", "세부"], rows)}`;
+  }
+
+  // ④ 주간 업무 / 개선 활동 (수기)
+  const works = (m.works || []).filter(r => rowHas(r, ["gubun", "task", "target", "result", "status", "issue", "next", "due", "owner", "note"]));
+  if (works.length) {
+    const rows = works.map((r, i) => `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(r.gubun || "")}</td><td ${td}>${esc(r.task || "")}</td><td ${td}>${esc(r.target || "")}</td><td ${td}>${esc(r.result || "")}</td><td ${tdc}>${esc(r.status || "")}</td><td ${td}>${esc(r.issue || "")}</td><td ${td}>${esc(r.next || "")}</td><td ${tdc}>${esc(r.due || "")}</td><td ${tdc}>${esc(r.owner || "")}</td><td ${td}>${esc(r.note || "")}</td></tr>`).join("");
+    sections += `<div ${band}>■ 주간 업무 / 개선 활동</div>${tbl(["No.", "구분", "업무", "목표/기준", "주간 실적", "상태", "주요이슈/원인", "차주 계획", "기한", "담당", "협업/비고"], rows)}`;
+  }
+
+  // ⑤ 주간 ITEM 변경 현황 (자동)
   if (sw.length) {
     const rows = sw.map((s, i) => {
       const restartTag = s.type === "restart" ? " [재가동]" : "";
@@ -1028,25 +1074,24 @@ function weeklyReportToHtml(rep) {
       const done = s.done ? `완료 ${s.doneAt || ""}` : "미완료";
       return `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(mmdd(s.date))}</td><td ${tdc}>${esc(s.team)}</td><td ${tdc}>${esc((s.line || "") + restartTag)}</td><td ${td}>${esc(s.from || "")} → ${esc(s.to || "")}${esc(resin)}</td><td ${tdc}>${esc(s.shift || "")}</td><td ${tdc}>${esc(done)}</td></tr>`;
     }).join("");
-    sections += `<div ${band}>■ 주간 ITEM 변경 현황</div>
-<table style="border-collapse:collapse;font-size:12px;">
-<tr><th ${th}>No.</th><th ${th}>일자</th><th ${th}>팀</th><th ${th}>라인</th><th ${th}>변경 내용</th><th ${th}>시점</th><th ${th}>완료</th></tr>
-${rows}
-</table>`;
+    sections += `<div ${band}>■ 주간 ITEM 변경 현황</div>${tbl(["No.", "일자", "팀", "라인", "변경 내용", "시점", "완료"], rows)}`;
   }
 
-  // 주간 인수인계 / 이슈
+  // ⑥ 주간 인수인계 / 이슈 (자동)
   if (ho.length) {
     const rows = ho.map((h, i) => {
       const ack = h.acked ? `확인 (${h.ackedBy || ""} ${h.ackedAt || ""})` : "미확인";
       const when = `${h.shift || ""} ${h.time || ""}`.trim();
       return `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(mmdd(h.date))}</td><td ${tdc}>${esc(h.team)}</td><td ${td}>${esc(h.text || "")}</td><td ${tdc}>${esc(h.author || "")}</td><td ${tdc}>${esc(when)}</td><td ${tdc}>${esc(ack)}</td></tr>`;
     }).join("");
-    sections += `<div ${band}>■ 주간 인수인계 / 이슈</div>
-<table style="border-collapse:collapse;font-size:12px;">
-<tr><th ${th}>No.</th><th ${th}>일자</th><th ${th}>구분</th><th ${th}>인수인계 내용</th><th ${th}>작성자</th><th ${th}>교대·시각</th><th ${th}>확인</th></tr>
-${rows}
-</table>`;
+    sections += `<div ${band}>■ 주간 인수인계 / 이슈</div>${tbl(["No.", "일자", "구분", "인수인계 내용", "작성자", "교대·시각", "확인"], rows)}`;
+  }
+
+  // ⑦ 주간 이슈 / 리스크 (수기)
+  const issues = (m.issues || []).filter(r => rowHas(r, ["gubun", "issue", "level", "cause", "temp", "action", "owner", "due", "status", "support"]));
+  if (issues.length) {
+    const rows = issues.map((r, i) => `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(r.gubun || "")}</td><td ${td}>${esc(r.issue || "")}</td><td ${tdc}>${esc(r.level || "")}</td><td ${td}>${esc(r.cause || "")}</td><td ${td}>${esc(r.temp || "")}</td><td ${td}>${esc(r.action || "")}</td><td ${tdc}>${esc(r.owner || "")}</td><td ${tdc}>${esc(r.due || "")}</td><td ${tdc}>${esc(r.status || "")}</td><td ${tdc}>${esc(r.support || "")}</td></tr>`).join("");
+    sections += `<div ${band}>■ 주간 이슈 / 리스크</div>${tbl(["No.", "구분", "이슈 사항", "중요도", "현상/원인", "임시조치", "근본대책/재발방지", "담당", "기한", "상태", "지원부서"], rows)}`;
   }
 
   if (!sections) sections = `<p style="color:#888;">해당 주 기록이 없습니다.</p>`;

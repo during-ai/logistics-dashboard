@@ -139,6 +139,21 @@
   .wr-meta b { color:var(--text-primary); }
   .wr-band { background:#2b4b7e; color:#fff; font-weight:700; font-size:12.5px; padding:5px 10px; border-radius:4px; margin:16px 0 6px; display:flex; align-items:baseline; gap:8px; }
   .wr-cnt { font-size:11px; font-weight:600; color:#cdd8ea; }
+  .wr-band.manual::after { content:"수기"; font-size:9.5px; font-weight:600; color:#cdd8ea; margin-left:6px; border:1px solid #7f97bd; border-radius:3px; padding:0 4px; }
+
+  /* 주간보고 수기 편집기 */
+  .admin-root:has(#tab-report.active) { max-width:1180px; }
+  .wr-ed-sec { margin-bottom:16px; }
+  .wr-ed-title { font-size:12px; font-weight:700; color:var(--text-secondary); margin-bottom:5px; }
+  .wr-ed-hint { font-size:10.5px; color:var(--text-muted); margin-bottom:5px; }
+  .wr-ed-ta { width:100%; min-height:70px; font:inherit; font-size:12px; padding:7px 9px; border:1px solid var(--border); border-radius:6px; background:var(--page-plane); color:var(--text-primary); resize:vertical; }
+  .wr-tbl-scroll { overflow-x:auto; border:1px solid var(--border); border-radius:6px; }
+  .wr-ed-tbl { border-collapse:collapse; font-size:11px; }
+  .wr-ed-tbl th { background:var(--gridline); font-weight:700; padding:4px 6px; text-align:left; white-space:nowrap; border-bottom:1px solid var(--border); }
+  .wr-ed-tbl td { padding:2px 4px; border-bottom:1px solid var(--gridline); }
+  .wr-ed-tbl input[type="text"] { font:inherit; font-size:11px; padding:4px 6px; border:1px solid var(--border); border-radius:4px; background:var(--surface-1); color:var(--text-primary); }
+  .wr-delrow { border:none; background:transparent; color:var(--status-critical); font-weight:700; font-size:15px; line-height:1; cursor:pointer; padding:0 4px; }
+  .wr-addrow { margin-top:5px; }
 </style>
 </head>
 <body>
@@ -297,11 +312,25 @@
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
         <select id="wreport-week" style="font:inherit;font-size:12px;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--page-plane);color:var(--text-primary);min-width:230px;"></select>
         <button class="btn btn-secondary" id="btn-wreport-gen" style="font-size:11px;">이번주 지금 갱신</button>
+        <button class="btn btn-secondary" id="btn-wreport-edit" style="font-size:11px;">수기 항목 편집</button>
         <a id="wreport-xls" class="btn btn-primary" style="font-size:11px;padding:6px 14px;text-decoration:none;display:none;">Excel 다운로드</a>
         <span id="wreport-status" style="font-size:11px;"></span>
       </div>
       <div id="wreport-view">
         <div style="font-size:12px;color:var(--text-muted);">주를 선택하세요.</div>
+      </div>
+
+      <div id="wreport-editor" style="display:none;margin-top:16px;border-top:2px dashed var(--border);padding-top:14px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <b style="font-size:13px;">수기 항목 편집</b>
+          <span style="font-size:11px;color:var(--text-muted);">양식 중 자동 집계가 안 되는 항목(핵심요약·KPI·업무/개선·이슈/리스크)을 직접 입력합니다. 빈 항목은 보고서에서 자동 생략됩니다.</span>
+        </div>
+        <div id="wr-editor-body"></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+          <button class="btn btn-primary" id="btn-wr-save" style="font-size:12px;">저장</button>
+          <button class="btn btn-secondary" id="btn-wr-cancel" style="font-size:12px;">닫기</button>
+          <span id="wr-save-status" style="font-size:11px;"></span>
+        </div>
       </div>
     </div>
 
@@ -1065,6 +1094,39 @@
     return `${ws.slice(5).replace("-", "/")} ~ ${(we || "").slice(5).replace("-", "/")}`;
   }
 
+  // 속성값 안전 이스케이프 (따옴표 포함)
+  function escA(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+  // 수기 편집 스키마 (자동집계 안 되는 양식 항목)
+  const WR_SCHEMA = {
+    summary: { title: "주간 핵심 요약", hint: "전주 대비 주요 실적 / 이슈 — 한 줄에 한 항목 (Top)" },
+    kpi: {
+      title: "주간 KPI", valueKeys: ["target", "actual", "cumulative", "note"],
+      cols: [
+        { k: "name", label: "KPI", w: 150 }, { k: "target", label: "목표", w: 90 },
+        { k: "actual", label: "실적", w: 90 }, { k: "cumulative", label: "누적", w: 190 }, { k: "note", label: "비고", w: 150 },
+      ],
+      defaults: [{ name: "완제품 출하(건/EA)" }, { name: "재공품 재고이동(건)" }, { name: "3정5S 점검(회)" }, { name: "정기점검(대수)" }, { name: "개선-비가동 시간(h)" }],
+    },
+    works: {
+      title: "주간 업무 / 개선 활동", numbered: true,
+      cols: [
+        { k: "gubun", label: "구분", w: 80 }, { k: "task", label: "업무", w: 160 }, { k: "target", label: "목표/기준", w: 110 },
+        { k: "result", label: "주간 실적", w: 150 }, { k: "status", label: "상태", w: 70 }, { k: "issue", label: "주요이슈/원인", w: 140 },
+        { k: "next", label: "차주 계획", w: 140 }, { k: "due", label: "기한", w: 100 }, { k: "owner", label: "담당", w: 80 }, { k: "note", label: "협업/비고", w: 110 },
+      ],
+    },
+    issues: {
+      title: "주간 이슈 / 리스크", numbered: true,
+      cols: [
+        { k: "gubun", label: "구분", w: 80 }, { k: "issue", label: "이슈 사항", w: 170 }, { k: "level", label: "중요도", w: 70 },
+        { k: "cause", label: "현상/원인", w: 150 }, { k: "temp", label: "임시조치", w: 150 }, { k: "action", label: "근본대책/재발방지", w: 160 },
+        { k: "owner", label: "담당", w: 80 }, { k: "due", label: "기한", w: 100 }, { k: "status", label: "상태", w: 70 }, { k: "support", label: "지원부서", w: 100 },
+      ],
+    },
+  };
+  let wrManual = {};
+
   async function loadWreportList() {
     const sel = document.getElementById("wreport-week");
     let items = [];
@@ -1086,21 +1148,47 @@
     const view = document.getElementById("wreport-view");
     const dl = document.getElementById("wreport-xls");
     dl.style.display = "none";
+    document.getElementById("wreport-editor").style.display = "none";
     view.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">불러오는 중…</div>';
+    // 수기 데이터는 주 생성 여부와 무관하게 로드
+    try { wrManual = await (await fetch(`api/wreport/manual/${weekStart}`)).json() || {}; } catch { wrManual = {}; }
     try {
       const r = await fetch(`api/wreport/${weekStart}`);
       if (!r.ok) {
-        view.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">아직 생성되지 않았습니다. \'이번주 지금 갱신\'을 눌러 만드세요. (PIN 필요)</div>';
+        view.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">아직 생성되지 않았습니다. \'이번주 지금 갱신\'으로 자동 집계를 만든 뒤, \'수기 항목 편집\'으로 나머지를 채우세요. (PIN 필요)</div>';
         return;
       }
       const data = await r.json();
-      renderWreport(data);
+      renderWreport(data, wrManual);
       dl.href = `api/wreport/${weekStart}/xls`;
       dl.style.display = "";
     } catch { view.innerHTML = '<div style="font-size:12px;color:var(--status-critical);">불러오기 실패</div>'; }
   }
 
-  function renderWreport(data) {
+  // 수기 표 섹션 → 미리보기 HTML (빈 항목 생략)
+  function wrManTablePreview(key) {
+    const s = WR_SCHEMA[key];
+    const vk = s.valueKeys || s.cols.map(c => c.k);
+    const rows = (wrManual[key] || []).filter(r => vk.some(k => String(r[k] || "").trim()));
+    if (!rows.length) return "";
+    const head = (s.numbered ? "<th>No.</th>" : "") + s.cols.map(c => `<th>${esc(c.label)}</th>`).join("");
+    const body = rows.map((r, i) => {
+      const no = s.numbered ? `<td class="c-when">${i + 1}</td>` : "";
+      return "<tr>" + no + s.cols.map(c => `<td>${esc(r[c.k] || "")}</td>`).join("") + "</tr>";
+    }).join("");
+    return `<div class="wr-band manual">${esc(s.title)}</div><div class="hist-tbl-wrap"><table class="hist-table"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  // 수기 핵심 요약 → 미리보기
+  function wrSummaryPreview() {
+    const items = (wrManual.summary || []).map(x => String(x || "").trim()).filter(Boolean);
+    if (!items.length) return "";
+    const body = items.map((s, i) => `<tr><td class="c-when">Top ${i + 1}</td><td>${esc(s)}</td></tr>`).join("");
+    return `<div class="wr-band manual">주간 핵심 요약</div><div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>구분</th><th>전주 대비 주요 실적 / 이슈</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }
+
+  function renderWreport(data, manual) {
+    wrManual = manual || wrManual || {};
     const view = document.getElementById("wreport-view");
     const mmdd = d => d ? d.slice(5).replace("-", "/") : "";
     const gen = data.generatedAt ? String(data.generatedAt).replace("T", " ").slice(5, 16) : "";
@@ -1110,11 +1198,10 @@
     const restartN = sw.filter(s => s.type === "restart").length;
     const hoAck = ho.filter(h => h.acked).length;
 
-    let sections = "";
-
-    // 주간 요약 지표
+    // 자동: 주간 요약 지표
+    let autoMetric = "";
     if (sw.length || ho.length) {
-      sections += `<div class="wr-band">주간 요약 지표</div>
+      autoMetric = `<div class="wr-band">주간 요약 지표 <span class="wr-cnt">현황판 자동</span></div>
       <div class="hist-tbl-wrap"><table class="hist-table">
         <thead><tr><th>항목</th><th>실적</th><th>세부</th></tr></thead><tbody>
         <tr><td>ITEM 변경</td><td class="c-team">${sw.length}건</td><td>완료 ${swDone} / 미완료 ${sw.length - swDone}${restartN ? ` · 재가동 ${restartN}` : ""}</td></tr>
@@ -1122,7 +1209,8 @@
       </tbody></table></div>`;
     }
 
-    // 주간 ITEM 변경 현황 (없으면 생략)
+    // 자동: ITEM 변경 현황
+    let swSection = "";
     if (sw.length) {
       let tr = "";
       sw.forEach((s, i) => {
@@ -1138,11 +1226,12 @@
         const done = s.done ? `<span class="hist-done">✓ ${esc(s.doneAt || "")}</span>` : '<span class="hist-undone">미완료</span>';
         tr += `<tr class="${restart ? "r-restart" : ""}"><td class="c-when">${i + 1}</td><td class="c-when">${esc(mmdd(s.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[s.team] || "#888"}"></span>${esc(s.team)}</td><td class="c-line">${esc(s.line || "")}${rtag}</td><td>${esc(s.from || "")} <span class="hist-arrow">→</span> ${esc(s.to || "")}${resin}</td><td class="c-when">${esc(s.shift || "")}</td><td>${done}</td></tr>`;
       });
-      sections += `<div class="wr-band">주간 ITEM 변경 현황 <span class="wr-cnt">${sw.length}건</span></div>
+      swSection = `<div class="wr-band">주간 ITEM 변경 현황 <span class="wr-cnt">${sw.length}건 · 현황판 자동</span></div>
       <div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>No.</th><th>일자</th><th>팀</th><th>라인</th><th>변경 내용</th><th>시점</th><th>완료</th></tr></thead><tbody>${tr}</tbody></table></div>`;
     }
 
-    // 주간 인수인계 / 이슈 (없으면 생략)
+    // 자동: 인수인계 / 이슈
+    let hoSection = "";
     if (ho.length) {
       let tr = "";
       ho.forEach((h, i) => {
@@ -1150,15 +1239,25 @@
         const ack = h.acked ? `<span class="hist-ack">✓ ${esc(h.ackedBy || "확인")} ${esc(h.ackedAt || "")}</span>` : '<span class="hist-noack">미확인</span>';
         tr += `<tr><td class="c-when">${i + 1}</td><td class="c-when">${esc(mmdd(h.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[h.team] || "#888"}"></span>${esc(h.team)}</td><td>${esc(h.text || "")}</td><td>${esc(h.author || "")}</td><td class="c-when">${shift}<span class="hist-time">${esc(h.time || "")}</span></td><td>${ack}</td></tr>`;
       });
-      sections += `<div class="wr-band">주간 인수인계 / 이슈 <span class="wr-cnt">${ho.length}건</span></div>
+      hoSection = `<div class="wr-band">주간 인수인계 / 이슈 <span class="wr-cnt">${ho.length}건 · 현황판 자동</span></div>
       <div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>No.</th><th>일자</th><th>구분</th><th>인수인계 내용</th><th>작성자</th><th>교대·시각</th><th>확인</th></tr></thead><tbody>${tr}</tbody></table></div>`;
     }
 
-    if (!sections) sections = '<div class="hist-mini-empty">해당 주 기록이 없습니다.</div>';
+    // 양식 순서로 병합 (수기 + 자동), 빈 섹션 생략
+    const parts = [
+      wrSummaryPreview(),
+      wrManTablePreview("kpi"),
+      autoMetric,
+      wrManTablePreview("works"),
+      swSection,
+      hoSection,
+      wrManTablePreview("issues"),
+    ].filter(Boolean);
+    const body = parts.length ? parts.join("") : '<div class="hist-mini-empty">해당 주 기록이 없습니다.</div>';
 
     view.innerHTML = `<div class="wr-title">물류 주간업무 보고</div>
       <div class="wr-meta"><span><b>기간</b> ${esc(data.weekStart)} ~ ${esc(data.weekEnd)}</span><span><b>작성부서</b> 생산관리(물류)</span>${gen ? `<span><b>생성일</b> ${esc(gen)}</span>` : ""}</div>
-      ${sections}`;
+      ${body}`;
   }
 
   document.getElementById("btn-wreport-gen").addEventListener("click", async () => {
@@ -1171,6 +1270,78 @@
       if (r.ok) {
         st.textContent = `갱신됨 (변경 ${j.counts.switchCount} · 인계 ${j.counts.handoverCount})`; st.style.color = "var(--status-good)";
         await loadWreportList();
+      } else { st.textContent = j.message || "실패"; st.style.color = "var(--status-critical)"; }
+    } catch { st.textContent = "실패"; st.style.color = "var(--status-critical)"; }
+    setTimeout(() => { st.textContent = ""; }, 6000);
+  });
+
+  /* ── 수기 항목 편집기 ── */
+  function wrEdRow(key, r) {
+    const s = WR_SCHEMA[key]; r = r || {};
+    return `<tr>${s.cols.map(c => `<td><input type="text" data-k="${c.k}" value="${escA(r[c.k] || "")}" style="width:${c.w}px;"></td>`).join("")}<td><button type="button" class="wr-delrow" title="행 삭제">×</button></td></tr>`;
+  }
+  function bindWrDelRows() {
+    document.querySelectorAll("#wr-editor-body .wr-delrow").forEach(btn => { btn.onclick = () => btn.closest("tr").remove(); });
+  }
+  function renderWrEditor() {
+    const box = document.getElementById("wr-editor-body");
+    const sc = WR_SCHEMA.summary;
+    let html = `<div class="wr-ed-sec"><div class="wr-ed-title">${sc.title}</div><div class="wr-ed-hint">${sc.hint}</div>
+      <textarea id="wr-ed-summary" class="wr-ed-ta" placeholder="한 줄에 한 항목">${esc((wrManual.summary || []).join("\n"))}</textarea></div>`;
+    ["kpi", "works", "issues"].forEach(key => {
+      const s = WR_SCHEMA[key];
+      const rows = (wrManual[key] && wrManual[key].length) ? wrManual[key] : (s.defaults || [{}]);
+      html += `<div class="wr-ed-sec"><div class="wr-ed-title">${s.title}</div>
+        <div class="wr-tbl-scroll"><table class="wr-ed-tbl" id="wr-ed-${key}"><thead><tr>${s.cols.map(c => `<th>${c.label}</th>`).join("")}<th></th></tr></thead>
+        <tbody>${rows.map(r => wrEdRow(key, r)).join("")}</tbody></table></div>
+        <button type="button" class="btn btn-secondary wr-addrow" data-key="${key}" style="font-size:11px;">+ 행 추가</button></div>`;
+    });
+    box.innerHTML = html;
+    box.querySelectorAll(".wr-addrow").forEach(btn => {
+      btn.onclick = () => {
+        document.querySelector(`#wr-ed-${btn.dataset.key} tbody`).insertAdjacentHTML("beforeend", wrEdRow(btn.dataset.key, {}));
+        bindWrDelRows();
+      };
+    });
+    bindWrDelRows();
+  }
+  function collectManual() {
+    const manual = {};
+    manual.summary = (document.getElementById("wr-ed-summary").value || "").split("\n").map(x => x.trim()).filter(Boolean);
+    ["kpi", "works", "issues"].forEach(key => {
+      const rows = [];
+      document.querySelectorAll(`#wr-ed-${key} tbody tr`).forEach(tr => {
+        const r = {};
+        tr.querySelectorAll("input[data-k]").forEach(inp => { const v = inp.value.trim(); if (v) r[inp.dataset.k] = v; });
+        if (Object.keys(r).length) rows.push(r);
+      });
+      manual[key] = rows;
+    });
+    return manual;
+  }
+
+  document.getElementById("btn-wreport-edit").addEventListener("click", () => {
+    const ed = document.getElementById("wreport-editor");
+    if (ed.style.display === "none") { renderWrEditor(); ed.style.display = ""; ed.scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+    else { ed.style.display = "none"; }
+  });
+  document.getElementById("btn-wr-cancel").addEventListener("click", () => { document.getElementById("wreport-editor").style.display = "none"; });
+  document.getElementById("btn-wr-save").addEventListener("click", async () => {
+    const st = document.getElementById("wr-save-status");
+    if (!pin) { st.textContent = "상단에서 PIN 인증 필요"; st.style.color = "var(--status-critical)"; return; }
+    const weekStart = document.getElementById("wreport-week").value;
+    if (!weekStart) { st.textContent = "주를 먼저 선택하세요"; st.style.color = "var(--status-critical)"; return; }
+    const manual = collectManual();
+    st.textContent = "저장 중…"; st.style.color = "var(--text-muted)";
+    try {
+      const r = await fetch("api/wreport/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin, weekStart, manual }) });
+      const j = await r.json();
+      if (r.ok) {
+        wrManual = manual;
+        st.textContent = "저장됨 — 미리보기에 반영"; st.style.color = "var(--status-good)";
+        await loadWreport(weekStart);
+        document.getElementById("wreport-editor").style.display = "";
+        renderWrEditor();
       } else { st.textContent = j.message || "실패"; st.style.color = "var(--status-critical)"; }
     } catch { st.textContent = "실패"; st.style.color = "var(--status-critical)"; }
     setTimeout(() => { st.textContent = ""; }, 6000);
