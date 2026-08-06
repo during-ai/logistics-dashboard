@@ -132,6 +132,13 @@
   .hist-ack { color:var(--status-good); font-weight:700; white-space:nowrap; }
   .hist-noack { color:var(--status-warning); font-weight:700; }
   .hist-mini-empty { font-size:11.5px; color:var(--text-muted); padding:4px 2px; }
+
+  /* 주간 누적 보고 — 회사 양식 스타일 */
+  .wr-title { font-size:17px; font-weight:800; border-bottom:2px solid #2b4b7e; padding-bottom:4px; margin-bottom:8px; }
+  .wr-meta { display:flex; gap:20px; flex-wrap:wrap; font-size:11.5px; color:var(--text-secondary); margin-bottom:6px; }
+  .wr-meta b { color:var(--text-primary); }
+  .wr-band { background:#2b4b7e; color:#fff; font-weight:700; font-size:12.5px; padding:5px 10px; border-radius:4px; margin:16px 0 6px; display:flex; align-items:baseline; gap:8px; }
+  .wr-cnt { font-size:11px; font-weight:600; color:#cdd8ea; }
 </style>
 </head>
 <body>
@@ -1095,14 +1102,30 @@
 
   function renderWreport(data) {
     const view = document.getElementById("wreport-view");
-    const c = data.counts || {};
     const mmdd = d => d ? d.slice(5).replace("-", "/") : "";
     const gen = data.generatedAt ? String(data.generatedAt).replace("T", " ").slice(5, 16) : "";
-    let swBody;
-    if (!data.switches || !data.switches.length) swBody = '<div class="hist-mini-empty">변경 없음</div>';
-    else {
+    const sw = data.switches || [];
+    const ho = data.handovers || [];
+    const swDone = sw.filter(s => s.done).length;
+    const restartN = sw.filter(s => s.type === "restart").length;
+    const hoAck = ho.filter(h => h.acked).length;
+
+    let sections = "";
+
+    // 주간 요약 지표
+    if (sw.length || ho.length) {
+      sections += `<div class="wr-band">주간 요약 지표</div>
+      <div class="hist-tbl-wrap"><table class="hist-table">
+        <thead><tr><th>항목</th><th>실적</th><th>세부</th></tr></thead><tbody>
+        <tr><td>ITEM 변경</td><td class="c-team">${sw.length}건</td><td>완료 ${swDone} / 미완료 ${sw.length - swDone}${restartN ? ` · 재가동 ${restartN}` : ""}</td></tr>
+        <tr><td>인수인계</td><td class="c-team">${ho.length}건</td><td>확인 ${hoAck} / 미확인 ${ho.length - hoAck}</td></tr>
+      </tbody></table></div>`;
+    }
+
+    // 주간 ITEM 변경 현황 (없으면 생략)
+    if (sw.length) {
       let tr = "";
-      data.switches.forEach(s => {
+      sw.forEach((s, i) => {
         const restart = s.type === "restart";
         const rtag = restart ? '<span class="hist-restart-tag">재가동</span>' : "";
         let resin = "";
@@ -1112,31 +1135,30 @@
           const cond = s.temp ? ` (${esc(s.temp)}/${esc(s.time || "")})` : "";
           resin = ` <span class="hist-resin">🔸${fr}${rn}${cond}</span>`;
         }
-        const done = s.done ? `<span class="hist-done">✓ ${esc(s.doneAt || "")}</span>` : '<span class="hist-undone">–</span>';
-        tr += `<tr class="${restart ? "r-restart" : ""}"><td class="c-when">${esc(mmdd(s.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[s.team] || "#888"}"></span>${esc(s.team)}</td><td class="c-line">${esc(s.line || "")}${rtag}</td><td>${esc(s.from || "")} <span class="hist-arrow">→</span> ${esc(s.to || "")}${resin}</td><td class="c-when">${esc(s.shift || "")}</td><td>${done}</td></tr>`;
+        const done = s.done ? `<span class="hist-done">✓ ${esc(s.doneAt || "")}</span>` : '<span class="hist-undone">미완료</span>';
+        tr += `<tr class="${restart ? "r-restart" : ""}"><td class="c-when">${i + 1}</td><td class="c-when">${esc(mmdd(s.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[s.team] || "#888"}"></span>${esc(s.team)}</td><td class="c-line">${esc(s.line || "")}${rtag}</td><td>${esc(s.from || "")} <span class="hist-arrow">→</span> ${esc(s.to || "")}${resin}</td><td class="c-when">${esc(s.shift || "")}</td><td>${done}</td></tr>`;
       });
-      swBody = `<div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>일자</th><th>팀</th><th>라인</th><th>변경</th><th>시점</th><th>완료</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+      sections += `<div class="wr-band">주간 ITEM 변경 현황 <span class="wr-cnt">${sw.length}건</span></div>
+      <div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>No.</th><th>일자</th><th>팀</th><th>라인</th><th>변경 내용</th><th>시점</th><th>완료</th></tr></thead><tbody>${tr}</tbody></table></div>`;
     }
-    let hoBody;
-    if (!data.handovers || !data.handovers.length) hoBody = '<div class="hist-mini-empty">인수인계 없음</div>';
-    else {
+
+    // 주간 인수인계 / 이슈 (없으면 생략)
+    if (ho.length) {
       let tr = "";
-      data.handovers.forEach(h => {
+      ho.forEach((h, i) => {
         const shift = h.shift ? `<span class="hist-shift">${esc(h.shift)}</span> ` : "";
         const ack = h.acked ? `<span class="hist-ack">✓ ${esc(h.ackedBy || "확인")} ${esc(h.ackedAt || "")}</span>` : '<span class="hist-noack">미확인</span>';
-        tr += `<tr><td class="c-when">${esc(mmdd(h.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[h.team] || "#888"}"></span>${esc(h.team)}</td><td class="c-when">${shift}<span class="hist-time">${esc(h.time || "")}</span></td><td>${esc(h.author || "")}</td><td>${esc(h.text || "")}</td><td>${ack}</td></tr>`;
+        tr += `<tr><td class="c-when">${i + 1}</td><td class="c-when">${esc(mmdd(h.date))}</td><td class="c-team"><span class="hist-team-dot" style="background:${HIST_DOT[h.team] || "#888"}"></span>${esc(h.team)}</td><td>${esc(h.text || "")}</td><td>${esc(h.author || "")}</td><td class="c-when">${shift}<span class="hist-time">${esc(h.time || "")}</span></td><td>${ack}</td></tr>`;
       });
-      hoBody = `<div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>일자</th><th>팀</th><th>교대·시각</th><th>작성자</th><th>내용</th><th>확인</th></tr></thead><tbody>${tr}</tbody></table></div>`;
+      sections += `<div class="wr-band">주간 인수인계 / 이슈 <span class="wr-cnt">${ho.length}건</span></div>
+      <div class="hist-tbl-wrap"><table class="hist-table"><thead><tr><th>No.</th><th>일자</th><th>구분</th><th>인수인계 내용</th><th>작성자</th><th>교대·시각</th><th>확인</th></tr></thead><tbody>${tr}</tbody></table></div>`;
     }
-    view.innerHTML = `<div class="hist-dv-head">
-      <h3 style="font-size:15px;margin:0;">${esc(data.weekStart)} ~ ${esc(data.weekEnd)} 주간 누적</h3>
-      <span style="font-size:11px;color:var(--text-muted);">변경 ${c.switchCount || 0}건 · 인계 ${c.handoverCount || 0}건</span>
-      ${gen ? `<span class="savedat" style="margin-left:auto;">갱신 ${esc(gen)}</span>` : ""}
-    </div>
-    <div class="hist-report">
-      <div class="hist-rsec"><div class="hist-rsec-title">ITEM 변경 <span class="cnt">${(data.switches || []).length}건</span></div>${swBody}</div>
-      <div class="hist-rsec"><div class="hist-rsec-title">인수인계 <span class="cnt">${(data.handovers || []).length}건</span></div>${hoBody}</div>
-    </div>`;
+
+    if (!sections) sections = '<div class="hist-mini-empty">해당 주 기록이 없습니다.</div>';
+
+    view.innerHTML = `<div class="wr-title">물류 주간업무 보고</div>
+      <div class="wr-meta"><span><b>기간</b> ${esc(data.weekStart)} ~ ${esc(data.weekEnd)}</span><span><b>작성부서</b> 생산관리(물류)</span>${gen ? `<span><b>생성일</b> ${esc(gen)}</span>` : ""}</div>
+      ${sections}`;
   }
 
   document.getElementById("btn-wreport-gen").addEventListener("click", async () => {

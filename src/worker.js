@@ -986,41 +986,81 @@ async function buildWeeklyReport(env, weekStart) {
   return report;
 }
 
-/* ── 주간 누적 보고 → Excel이 여는 HTML(.xls) ── */
+/* ── 주간 누적 보고 → Excel이 여는 HTML(.xls) — 회사 양식(물류 주간업무 보고) 기반, 빈 섹션 생략 ── */
 function weeklyReportToHtml(rep) {
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   const mmdd = (d) => d ? d.slice(5).replace("-", "/") : "";
-  const swRows = rep.switches.map(s => {
-    const restart = s.type === "restart" ? " [재가동]" : "";
-    let resin = "";
-    if (s.resin) {
-      const rn = s.resinGrade || s.resin;
-      const fr = s.fromResin ? `${s.fromResinGrade || s.fromResin}→` : "";
-      const cond = s.temp ? ` (${s.temp}/${s.time || ""})` : "";
-      resin = ` ${fr}${rn}${cond}`;
-    }
-    const done = s.done ? `완료 ${s.doneAt || ""}` : "";
-    return `<tr><td>${esc(mmdd(s.date))}</td><td>${esc(s.team)}</td><td>${esc((s.line || "") + restart)}</td><td>${esc(s.from || "")} → ${esc(s.to || "")}${esc(resin)}</td><td>${esc(s.shift || "")}</td><td>${esc(done)}</td></tr>`;
-  }).join("");
-  const hoRows = rep.handovers.map(h => {
-    const ack = h.acked ? `확인 ${h.ackedBy || ""} ${h.ackedAt || ""}` : "미확인";
-    return `<tr><td>${esc(mmdd(h.date))}</td><td>${esc(h.team)}</td><td>${esc(h.shift || "")} ${esc(h.time || "")}</td><td>${esc(h.author || "")}</td><td>${esc(h.text || "")}</td><td>${esc(ack)}</td></tr>`;
-  }).join("");
-  const th = 'style="background:#e8eef7;font-weight:bold;border:1px solid #999;padding:4px 8px;"';
-  const td = 'border:1px solid #ccc;padding:4px 8px;';
-  return `<html><head><meta charset="utf-8"></head><body style="font-family:'맑은 고딕',sans-serif;">
-<h2>물류 파트 주간업무보고 (${esc(rep.weekStart)} ~ ${esc(rep.weekEnd)})</h2>
-<p>ITEM 변경 ${rep.counts.switchCount}건 · 인수인계 ${rep.counts.handoverCount}건 · 생성 ${esc(String(rep.generatedAt).replace("T", " ").slice(0, 16))}</p>
-<h3>ITEM 변경</h3>
+  const sw = rep.switches || [];
+  const ho = rep.handovers || [];
+  const swDone = sw.filter(s => s.done).length;
+  const restart = sw.filter(s => s.type === "restart").length;
+  const hoAck = ho.filter(h => h.acked).length;
+  const gen = String(rep.generatedAt || "").replace("T", " ").slice(0, 16);
+
+  const th = 'style="background:#dfe7f3;font-weight:bold;border:1px solid #8899aa;padding:4px 7px;text-align:center;"';
+  const td = 'style="border:1px solid #bbbbbb;padding:3px 7px;"';
+  const tdc = 'style="border:1px solid #bbbbbb;padding:3px 7px;text-align:center;"';
+  const band = 'style="background:#2b4b7e;color:#ffffff;font-weight:bold;padding:5px 9px;font-size:13px;margin:14px 0 4px;"';
+
+  let sections = "";
+
+  // 주간 요약 지표
+  if (sw.length || ho.length) {
+    sections += `<div ${band}>■ 주간 요약 지표</div>
 <table style="border-collapse:collapse;font-size:12px;">
-<tr><th ${th}>일자</th><th ${th}>팀</th><th ${th}>라인</th><th ${th}>변경</th><th ${th}>시점</th><th ${th}>완료</th></tr>
-${swRows || `<tr><td style="${td}" colspan="6">변경 없음</td></tr>`}
-</table>
-<h3 style="margin-top:16px;">인수인계</h3>
+<tr><th ${th}>항목</th><th ${th}>실적</th><th ${th}>세부</th></tr>
+<tr><td ${td}>ITEM 변경</td><td ${tdc}>${sw.length}건</td><td ${td}>완료 ${swDone} / 미완료 ${sw.length - swDone}${restart ? ` · 재가동 ${restart}` : ""}</td></tr>
+<tr><td ${td}>인수인계</td><td ${tdc}>${ho.length}건</td><td ${td}>확인 ${hoAck} / 미확인 ${ho.length - hoAck}</td></tr>
+</table>`;
+  }
+
+  // 주간 ITEM 변경 현황
+  if (sw.length) {
+    const rows = sw.map((s, i) => {
+      const restartTag = s.type === "restart" ? " [재가동]" : "";
+      let resin = "";
+      if (s.resin) {
+        const rn = s.resinGrade || s.resin;
+        const fr = s.fromResin ? `${s.fromResinGrade || s.fromResin}→` : "";
+        const cond = s.temp ? ` (${s.temp}/${s.time || ""})` : "";
+        resin = ` / ${fr}${rn}${cond}`;
+      }
+      const done = s.done ? `완료 ${s.doneAt || ""}` : "미완료";
+      return `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(mmdd(s.date))}</td><td ${tdc}>${esc(s.team)}</td><td ${tdc}>${esc((s.line || "") + restartTag)}</td><td ${td}>${esc(s.from || "")} → ${esc(s.to || "")}${esc(resin)}</td><td ${tdc}>${esc(s.shift || "")}</td><td ${tdc}>${esc(done)}</td></tr>`;
+    }).join("");
+    sections += `<div ${band}>■ 주간 ITEM 변경 현황</div>
 <table style="border-collapse:collapse;font-size:12px;">
-<tr><th ${th}>일자</th><th ${th}>팀</th><th ${th}>교대·시각</th><th ${th}>작성자</th><th ${th}>내용</th><th ${th}>확인</th></tr>
-${hoRows || `<tr><td style="${td}" colspan="6">인수인계 없음</td></tr>`}
+<tr><th ${th}>No.</th><th ${th}>일자</th><th ${th}>팀</th><th ${th}>라인</th><th ${th}>변경 내용</th><th ${th}>시점</th><th ${th}>완료</th></tr>
+${rows}
+</table>`;
+  }
+
+  // 주간 인수인계 / 이슈
+  if (ho.length) {
+    const rows = ho.map((h, i) => {
+      const ack = h.acked ? `확인 (${h.ackedBy || ""} ${h.ackedAt || ""})` : "미확인";
+      const when = `${h.shift || ""} ${h.time || ""}`.trim();
+      return `<tr><td ${tdc}>${i + 1}</td><td ${tdc}>${esc(mmdd(h.date))}</td><td ${tdc}>${esc(h.team)}</td><td ${td}>${esc(h.text || "")}</td><td ${tdc}>${esc(h.author || "")}</td><td ${tdc}>${esc(when)}</td><td ${tdc}>${esc(ack)}</td></tr>`;
+    }).join("");
+    sections += `<div ${band}>■ 주간 인수인계 / 이슈</div>
+<table style="border-collapse:collapse;font-size:12px;">
+<tr><th ${th}>No.</th><th ${th}>일자</th><th ${th}>구분</th><th ${th}>인수인계 내용</th><th ${th}>작성자</th><th ${th}>교대·시각</th><th ${th}>확인</th></tr>
+${rows}
+</table>`;
+  }
+
+  if (!sections) sections = `<p style="color:#888;">해당 주 기록이 없습니다.</p>`;
+
+  return `<html><head><meta charset="utf-8"></head><body style="font-family:'맑은 고딕','Malgun Gothic',sans-serif;color:#111111;">
+<div style="font-size:18px;font-weight:bold;border-bottom:2px solid #2b4b7e;padding-bottom:4px;margin-bottom:7px;">물류 주간업무 보고</div>
+<table style="font-size:12px;margin-bottom:6px;">
+<tr>
+<td style="padding-right:22px;"><b>기간</b>&nbsp; ${esc(rep.weekStart)} ~ ${esc(rep.weekEnd)}</td>
+<td style="padding-right:22px;"><b>작성부서</b>&nbsp; 생산관리(물류)</td>
+<td><b>생성일</b>&nbsp; ${esc(gen)}</td>
+</tr>
 </table>
+${sections}
 </body></html>`;
 }
 
