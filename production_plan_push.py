@@ -336,6 +336,20 @@ def col_letter_to_idx(letter):
     return result
 
 
+def find_header_col(ws, header_row, keywords):
+    """헤더행(및 인접행: 병합 대비)에서 키워드와 정확히 일치하는 컬럼 인덱스 반환.
+    공백 제거 후 비교. 못 찾으면 None."""
+    keys = {re.sub(r"\s+", "", k) for k in keywords}
+    for rr in (header_row, header_row - 1, header_row + 1):
+        if rr < 1:
+            continue
+        for c in range(1, ws.max_column + 1):
+            v = ws.cell(row=rr, column=c).value
+            if v and re.sub(r"\s+", "", str(v)) in keys:
+                return c
+    return None
+
+
 def find_date_column(ws, header_row, target_date, start_col=1, max_col=None):
     """헤더 행에서 target_date에 해당하는 컬럼 인덱스 찾기"""
     if max_col is None:
@@ -429,6 +443,12 @@ def parse_plan_sheet(wb, team, config, target_date, prev_date, next_date=None):
     line_col_idx = col_letter_to_idx(config["line_col"])
     group_col_idx = col_letter_to_idx(config["group_col"]) if config.get("group_col") else None
     product_col_idx = col_letter_to_idx(config["product_col"])
+    # 품명 컬럼 헤더('품명') 자동탐지 — 파일 포맷이 컬럼 이동돼도(예: 권선 계획의
+    #  품명이 설정 F가 아니라 G열) 헤더를 따라간다. 못 찾으면 설정값 유지(사출/전장은 동일).
+    _pc = find_header_col(ws, header_row, ("품명", "품 명"))
+    if _pc and _pc != product_col_idx:
+        print(f"  [{team}] 품명 컬럼 자동교정: {config['product_col']} → {_pc}열")
+        product_col_idx = _pc
     product_code_col_idx = col_letter_to_idx(config["product_code_col"]) if config.get("product_code_col") else None
     equip_col_idx = col_letter_to_idx(config["equip_col"]) if config.get("equip_col") else None
     data_start = config["data_start_row"]
