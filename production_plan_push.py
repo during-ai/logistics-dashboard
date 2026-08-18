@@ -80,6 +80,10 @@ TEAM_CONFIG = {
         "sub_header_row": 6,
         "data_start_row": 7,
         "line_col": "C",
+        "group_col": "E",            # 공정명(E열)로 세부 그룹핑: 한 LINE명(예:KEV-1) 안에
+                                     # 여러 공정(COVER/PRE ASS'Y/FINAL ASS'Y 등)이 섞여 있어,
+                                     # 공정명 단위로 나눠야 ITEM변경이 정확히 잡힘.
+                                     # 표시: "LINE명 › 공정명" (LINE명·공정명 순)
         "equip_col": None,           # 전장은 LINE명이 곧 설비
         "product_code_col": "G",    # 품번 컬럼
         "product_col": "H",
@@ -281,8 +285,27 @@ def find_team_file(folder, team):
     return None
 
 
+_SYNCED = False
+
+
+def _ensure_server_synced():
+    """서버 다운로더(:8510)에서 최신 계획파일을 로컬로 1회 동기화(있으면 유지).
+    서버가 안 잡히면 조용히 넘어가 기존 로컬 파일로 동작. PC 오프 이후 부팅 시에도
+    서버가 받아둔 최신본을 확보한다."""
+    global _SYNCED
+    if _SYNCED:
+        return
+    _SYNCED = True
+    try:
+        import plan_sync
+        plan_sync.sync_from_server()
+    except Exception:
+        pass
+
+
 def find_team_file_broad(team):
     """여러 경로에서 팀 생산계획 파일 탐색 (HalIlApp/downloads 우선)"""
+    _ensure_server_synced()
     pattern = f"{team}*생산계획*"
     candidates = []
     # 1. GW 다운로드 폴더 우선 탐색
@@ -356,11 +379,16 @@ def parse_cover_notices(wb, cover_sheet_name):
         text_val = ws.cell(row=row, column=4).value  # D열 = 내용
         if text_val and str(text_val).strip():
             text = str(text_val).strip()
+            tag = str(tag_val).strip() if tag_val else ""
+            # 호기(C열)가 비어 있고 부연설명("- ") 행은 직전 특이사항에 병합
+            # (하나의 특이사항이 여러 줄로 작성된 경우 별도 항목으로 쪼개지지 않도록)
+            if not tag and notices and text.lstrip().startswith("-"):
+                notices[-1]["text"] += "\n" + text
+                continue
             # "■ " 접두사 제거
             if text.startswith("■"):
                 text = text[1:].strip()
-            tag = str(tag_val).strip() if tag_val else "공지"
-            notices.append({"tag": tag, "text": text})
+            notices.append({"tag": tag or "공지", "text": text})
     return notices
 
 
@@ -399,6 +427,7 @@ def parse_plan_sheet(wb, team, config, target_date, prev_date, next_date=None):
     night_col = target_col + 1
 
     line_col_idx = col_letter_to_idx(config["line_col"])
+    group_col_idx = col_letter_to_idx(config["group_col"]) if config.get("group_col") else None
     product_col_idx = col_letter_to_idx(config["product_col"])
     product_code_col_idx = col_letter_to_idx(config["product_code_col"]) if config.get("product_code_col") else None
     equip_col_idx = col_letter_to_idx(config["equip_col"]) if config.get("equip_col") else None
@@ -406,6 +435,8 @@ def parse_plan_sheet(wb, team, config, target_date, prev_date, next_date=None):
 
     # 데이터 추출
     current_line = ""
+    current_line_label = ""    # LINE명(C열) — 그룹 접두사
+    current_group = ""         # 작업장(group_col) — 하위 그룹
     current_equip = ""
     line_equip_map = {}        # line -> 설비명
     lines_day = set()
@@ -419,7 +450,19 @@ def parse_plan_sheet(wb, team, config, target_date, prev_date, next_date=None):
         # 라인 번호 (비어있으면 이전 값 유지, 개행 제거)
         line_val = ws.cell(row=row, column=line_col_idx).value
         if line_val and str(line_val).strip():
-            current_line = re.sub(r'\s+', ' ', str(line_val)).strip()
+            current_line_label = re.sub(r'\s+', ' ', str(line_val)).strip()
+            if group_col_idx:
+                current_group = ""   # 새 LINE명 시작 시 작업장 리셋
+        # 작업장(group_col) — 세부 그룹 (전장). 비어있으면 이전 값 유지
+        if group_col_idx:
+            group_val = ws.cell(row=row, column=group_col_idx).value
+            if group_val and str(group_val).strip():
+                current_group = re.sub(r'\s+', ' ', str(group_val)).strip()
+        # 그룹 키 결정: 작업장이 있으면 "LINE명 › 작업장", 없으면 LINE명 단독
+        if group_col_idx and current_group:
+            current_line = f"{current_line_label} › {current_group}"
+        else:
+            current_line = current_line_label
         # 설비명
         if equip_col_idx:
             equip_val = ws.cell(row=row, column=equip_col_idx).value

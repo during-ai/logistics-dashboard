@@ -1,3 +1,12 @@
 node_modules/
 .wrangler/
 .dev.vars
+
+# 자격증명·산출물 (공개 저장소이므로 절대 커밋 금지)
+gw_server_downloader/gw_config.json
+gw_server_downloader/downloads/
+gw_server_downloader/*.tar.gz
+downloader_state.json
+__pycache__/
+*.log
+.last_push.json

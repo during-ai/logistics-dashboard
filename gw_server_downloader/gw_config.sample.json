@@ -1,0 +1,11 @@
+{
+  "gw_url": "https://gw.e-during.co.kr",
+  "login_id": "<그룹웨어 아이디>",
+  "login_pw": "<그룹웨어 비밀번호>",
+  "board_url": "https://gw.e-during.co.kr/home.do",
+  "board_id": "<생산계획 게시판 ID>",
+  "business_code": "bbs2",
+  "download_dir": "/data/downloads",
+  "teams": ["권선", "사출", "전장"],
+  "year": 2026
+}
